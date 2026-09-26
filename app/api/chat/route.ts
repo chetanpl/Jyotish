@@ -2801,6 +2801,20 @@ INTERPRETATION RULES
     chart from birth details provided inside the prompt.
     For two-person kundli matching or compatibility,
     explain that only one birth profile is currently supported.
+
+  15. RESPONSE LENGTH AND COMPLETENESS:
+    Keep responses concise but complete.
+    For normal questions, give a clear answer with
+    approximately 3 to 7 meaningful points.
+    Do not unnecessarily repeat the same information.
+    Always finish the explanation before ending the response.
+    Include a short final summary when the question requires
+    explanation or analysis.
+    Do not start unnecessary sections or long introductions.
+    For simple questions, keep the answer brief.
+    For detailed questions, use the available response space
+    efficiently and complete the main points before concluding.
+    Never leave the answer incomplete or cut off.
 `;
 }
 
