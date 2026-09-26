@@ -1,8 +1,8 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #faf9f6;
+  --foreground: #273142;
 }
 
 @theme inline {
@@ -12,15 +12,312 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+  scroll-behavior: smooth;
 }
 
 body {
+  margin: 0;
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+.astro-bg-om,
+.astro-bg-om-one,
+.astro-bg-om-two,
+.astro-bg-om-three,
+.astro-bg-om-four {
+  display: none !important;
+}
+/* =========================================================
+   OM SHIMMER EFFECT
+========================================================= */
+
+.astro-logo,
+.astro-chat-om,
+.astro-welcome-om,
+.astro-small-om,
+.astro-location-om,
+.astro-thinking-om,
+.astro-shanti-om,
+.astro-footer-om {
+  position: relative;
+  overflow: hidden;
+}
+
+/* ॐ के ऊपर light shimmer sweep */
+.astro-logo::after,
+.astro-chat-om::after,
+.astro-welcome-om::after,
+.astro-small-om::after,
+.astro-location-om::after,
+.astro-thinking-om::after,
+.astro-shanti-om::after,
+.astro-footer-om::after {
+  content: "";
+  position: absolute;
+  top: -60%;
+  left: -90%;
+  width: 45%;
+  height: 220%;
+  pointer-events: none;
+  background: linear-gradient(
+    105deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.04) 35%,
+    rgba(255, 255, 255, 0.8) 50%,
+    rgba(255, 255, 255, 0.04) 65%,
+    transparent 100%
+  );
+  transform: skewX(-18deg);
+  animation: astroOmShimmer 3.2s ease-in-out infinite;
+}
+
+/* text ॐ के लिए थोड़ा softer shimmer */
+.astro-shanti-om::after,
+.astro-footer-om::after,
+.astro-thinking-om::after {
+  width: 70%;
+  left: -120%;
+  background: linear-gradient(
+    105deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0) 35%,
+    rgba(255, 255, 255, 0.75) 50%,
+    rgba(255, 255, 255, 0) 65%,
+    transparent 100%
+  );
+}
+
+@keyframes astroOmShimmer {
+  0% {
+    left: -100%;
+    opacity: 0;
+  }
+
+  15% {
+    opacity: 1;
+  }
+
+  45% {
+    opacity: 1;
+  }
+
+  60% {
+    left: 150%;
+    opacity: 0;
+  }
+
+  100% {
+    left: 150%;
+    opacity: 0;
+  }
+}
+
+/* ॐ में subtle glow भी */
+.astro-logo,
+.astro-chat-om,
+.astro-welcome-om {
+  animation:
+    astroOmBreath 3s ease-in-out infinite,
+    astroOmGlow 3s ease-in-out infinite;
+}
+
+@keyframes astroOmBreath {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+
+  50% {
+    transform: scale(1.045);
+  }
+}
+
+@keyframes astroOmGlow {
+  0%,
+  100% {
+    filter: drop-shadow(
+      0 0 0 rgba(107, 79, 138, 0)
+    );
+  }
+
+  50% {
+    filter: drop-shadow(
+      0 0 9px rgba(107, 79, 138, 0.22)
+    );
+  }
+}
+
+/* =========================================================
+   SHANTI LABEL - BIGGER
+========================================================= */
+
+.astro-shanti-badge {
+  min-height: 46px;
+  padding: 11px 19px;
+  gap: 10px;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.astro-shanti-text {
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
+/* ॐ inside badge */
+.astro-shanti-om {
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 19px;
+}
+
+/* Responsive size */
+@media (max-width: 640px) {
+  .astro-shanti-badge {
+    min-height: 42px;
+    padding: 9px 15px;
+    font-size: 13px;
+  }
+
+  .astro-shanti-text {
+    font-size: 13px;
+  }
+
+  .astro-shanti-om {
+    width: 22px;
+    height: 22px;
+    font-size: 17px;
+  }
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .astro-logo::after,
+  .astro-chat-om::after,
+  .astro-welcome-om::after,
+  .astro-small-om::after,
+  .astro-location-om::after,
+  .astro-thinking-om::after,
+  .astro-shanti-om::after,
+  .astro-footer-om::after {
+    animation: none;
+  }
+}
+/* =========================================================
+   ASTRO PREMIUM ROTATING INPUT BORDER
+   ========================================================= */
+
+@property --astro-border-angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+
+.astro-input,
+.astro-textarea {
+  position: relative;
+  transition:
+    border-color 0.25s ease,
+    box-shadow 0.25s ease,
+    transform 0.2s ease;
+}
+
+.astro-input:focus,
+.astro-textarea:focus {
+  border-color: transparent !important;
+
+  background:
+    linear-gradient(#ffffff, #ffffff) padding-box,
+    conic-gradient(
+      from var(--astro-border-angle),
+      #6b4f8a 0deg,
+      #6b4f8a 35deg,
+      #d8c2e8 60deg,
+      #ffffff 82deg,
+      #ffffff 105deg,
+      #d8c2e8 130deg,
+      #6b4f8a 165deg,
+      #6b4f8a 210deg,
+      #c5a9dd 235deg,
+      #ffffff 255deg,
+      #ffffff 280deg,
+      #c5a9dd 305deg,
+      #6b4f8a 340deg,
+      #6b4f8a 360deg
+    ) border-box;
+
+  animation:
+    astro-input-border-spin 1.7s linear infinite,
+    astro-input-glow 1.7s ease-in-out infinite;
+
+  box-shadow:
+    0 0 0 1px rgba(107, 79, 138, 0.16),
+    0 0 10px rgba(107, 79, 138, 0.16),
+    0 0 24px rgba(107, 79, 138, 0.11);
+}
+
+@keyframes astro-input-border-spin {
+  from {
+    --astro-border-angle: 0deg;
+  }
+
+  to {
+    --astro-border-angle: 360deg;
+  }
+}
+
+@keyframes astro-input-glow {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 1px rgba(107, 79, 138, 0.15),
+      0 0 10px rgba(107, 79, 138, 0.14),
+      0 0 20px rgba(107, 79, 138, 0.08);
+  }
+
+  50% {
+    box-shadow:
+      0 0 0 1px rgba(107, 79, 138, 0.24),
+      0 0 14px rgba(107, 79, 138, 0.22),
+      0 0 30px rgba(107, 79, 138, 0.14);
+  }
+}
+
+/* Main question box gets a slightly stronger glow */
+.astro-textarea:focus {
+  box-shadow:
+    0 0 0 1px rgba(107, 79, 138, 0.18),
+    0 0 14px rgba(107, 79, 138, 0.18),
+    0 0 32px rgba(107, 79, 138, 0.12);
+}
+
+/* Don't animate disabled fields */
+.astro-input:disabled,
+.astro-textarea:disabled {
+  animation: none;
+}
+
+/* Reduced motion accessibility */
+@media (prefers-reduced-motion: reduce) {
+  .astro-input:focus,
+  .astro-textarea:focus {
+    animation: none;
+  }
 }

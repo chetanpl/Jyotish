@@ -1,0 +1,154 @@
+.astro-shanti-badge {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+
+  background:
+    linear-gradient(
+      110deg,
+      rgba(107, 79, 138, 0.08) 0%,
+      rgba(107, 79, 138, 0.14) 35%,
+      rgba(154, 126, 184, 0.24) 50%,
+      rgba(107, 79, 138, 0.14) 65%,
+      rgba(107, 79, 138, 0.08) 100%
+    );
+
+  background-size: 250% 100%;
+
+  animation: astroShantiShimmer 4s ease-in-out infinite;
+}
+
+.astro-shanti-badge::before {
+  content: "";
+  position: absolute;
+  inset: -100% -30%;
+
+  background: linear-gradient(
+    110deg,
+    transparent 35%,
+    rgba(255, 255, 255, 0.08) 43%,
+    rgba(255, 255, 255, 0.38) 50%,
+    rgba(255, 255, 255, 0.08) 57%,
+    transparent 65%
+  );
+
+  transform: translateX(-55%);
+  animation: astroShantiLight 3.2s ease-in-out infinite;
+
+  pointer-events: none;
+  z-index: -1;
+}
+
+.astro-shanti-badge::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+
+  background:
+    radial-gradient(
+      circle at 20% 50%,
+      rgba(107, 79, 138, 0.16),
+      transparent 32%
+    ),
+    radial-gradient(
+      circle at 80% 50%,
+      rgba(154, 126, 184, 0.14),
+      transparent 32%
+    );
+
+  opacity: 0.8;
+
+  animation: astroShantiGlow 3.5s ease-in-out infinite;
+
+  pointer-events: none;
+  z-index: -1;
+}
+
+.astro-shanti-om {
+  position: relative;
+  z-index: 2;
+
+  color: #6b4f8a;
+
+  text-shadow:
+    0 0 4px rgba(107, 79, 138, 0.25),
+    0 0 10px rgba(107, 79, 138, 0.18);
+
+  animation: astroOmGlow 2.8s ease-in-out infinite;
+}
+
+@keyframes astroShantiShimmer {
+  0% {
+    background-position: 120% 50%;
+  }
+
+  50% {
+    background-position: 0% 50%;
+  }
+
+  100% {
+    background-position: -120% 50%;
+  }
+}
+
+@keyframes astroShantiLight {
+  0% {
+    transform: translateX(-70%) skewX(-12deg);
+    opacity: 0;
+  }
+
+  20% {
+    opacity: 1;
+  }
+
+  50% {
+    transform: translateX(70%) skewX(-12deg);
+    opacity: 1;
+  }
+
+  70% {
+    opacity: 0.5;
+  }
+
+  100% {
+    transform: translateX(150%) skewX(-12deg);
+    opacity: 0;
+  }
+}
+
+@keyframes astroShantiGlow {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes astroOmGlow {
+  0%,
+  100% {
+    transform: scale(1);
+    text-shadow:
+      0 0 4px rgba(107, 79, 138, 0.25),
+      0 0 10px rgba(107, 79, 138, 0.18);
+  }
+
+  50% {
+    transform: scale(1.05);
+    text-shadow:
+      0 0 6px rgba(107, 79, 138, 0.4),
+      0 0 16px rgba(107, 79, 138, 0.3);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .astro-shanti-badge,
+  .astro-shanti-badge::before,
+  .astro-shanti-badge::after,
+  .astro-shanti-om {
+    animation: none;
+  }
+}
