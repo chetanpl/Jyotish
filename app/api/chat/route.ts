@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import SwissEph from "swisseph-wasm";
-import { sendAstroEmail } from "../../../lib/sendAstroEmail";
 
 export const runtime = "nodejs";
 
@@ -3110,49 +3109,6 @@ export async function POST(
         astrologyContext,
         messages,
       );
-
-    /*
-    |--------------------------------------------------------------------------
-    | SEND EMAIL
-    |--------------------------------------------------------------------------
-    |
-    | Email is sent from the server.
-    |
-    | If email fails, the user still receives the
-    | Gemini answer. The failure is logged server-side.
-    |--------------------------------------------------------------------------
-    */
-
-    try {
-      await sendAstroEmail({
-        profile: {
-          name:
-            profile.name,
-
-          dateOfBirth:
-            profile.dateOfBirth,
-
-          timeOfBirth:
-            profile.timeOfBirth,
-
-          placeOfBirth:
-            profile.placeOfBirth,
-        },
-
-        question,
-
-        answer,
-      });
-
-      console.log(
-        "AstroAI email sent successfully.",
-      );
-    } catch (emailError) {
-      console.error(
-        "AstroAI email sending failed:",
-        emailError,
-      );
-    }
 
     /*
     |--------------------------------------------------------------------------
