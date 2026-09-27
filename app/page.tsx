@@ -210,9 +210,34 @@ export default function Home() {
   const musicRef =
     useRef<HTMLAudioElement | null>(null);
 
+  /*
+   * true once this page-load music session
+   * has successfully started.
+   *
+   * This prevents:
+   * - field clicks
+   * - random clicks
+   * - typing
+   * - other interactions
+   *
+   * from starting the same music again.
+   */
   const musicStartedRef =
     useRef(false);
 
+  /*
+   * Keeps the CURRENT preference available
+   * inside async play() callbacks.
+   *
+   * This avoids stale React closure problems.
+   */
+  const musicEnabledRef =
+    useRef<boolean | null>(null);
+
+  /*
+   * Prevents the first-interaction fallback
+   * from trying repeatedly.
+   */
   const firstInteractionHandledRef =
     useRef(false);
 
@@ -220,11 +245,9 @@ export default function Home() {
     useState(false);
 
   /*
-   * Important:
-   *
    * null = preference has not been read yet
-   * true = user wants music ON
-   * false = user explicitly turned music OFF
+   * true = music ON
+   * false = music explicitly OFF
    */
   const [musicEnabled, setMusicEnabled] =
     useState<boolean | null>(null);
@@ -356,7 +379,7 @@ export default function Home() {
             if (
               error instanceof DOMException &&
               error.name ===
-              "AbortError"
+                "AbortError"
             ) {
               return;
             }
@@ -467,7 +490,11 @@ export default function Home() {
       !ASTRO_MUSIC_ENABLED ||
       typeof window === "undefined"
     ) {
+      musicEnabledRef.current =
+        false;
+
       setMusicEnabled(false);
+
       return;
     }
 
@@ -478,18 +505,21 @@ export default function Home() {
         );
 
       /*
-       * IMPORTANT:
+       * Only explicit "false" means OFF.
        *
-       * Only an explicit "false" means the user
-       * has turned music OFF.
-       *
-       * If there is no saved preference, default
-       * to ON for a first-time visitor.
+       * No saved value = ON.
        */
-      setMusicEnabled(
-        saved !== "false",
-      );
+      const enabled =
+        saved !== "false";
+
+      musicEnabledRef.current =
+        enabled;
+
+      setMusicEnabled(enabled);
     } catch {
+      musicEnabledRef.current =
+        true;
+
       setMusicEnabled(true);
     }
   }, []);
@@ -499,22 +529,20 @@ export default function Home() {
   | Background Om Music
   |--------------------------------------------------------------------------
   |
-  | Behaviour:
+  | ONE PLAY PER PAGE LOAD
   |
-  | - First-time visitor:
-  |     page load -> try autoplay
+  | 1. Page loads -> try autoplay once.
   |
-  | - If browser blocks autoplay:
-  |     first user interaction -> play
+  | 2. If browser blocks autoplay -> first
+  |    interaction tries once.
   |
-  | - If user previously turned OFF:
-  |     page load -> NO music
-  |     click anywhere -> NO music
-  |     field click -> NO music
-  |     typing -> NO music
+  | 3. After music starts, no other interaction
+  |    can restart it.
   |
-  | - User must explicitly press the music
-  |   button to turn it ON again.
+  | 4. No loop.
+  |
+  | 5. If user preference is OFF, no automatic
+  |    playback listener is installed.
   |
   */
 
@@ -526,10 +554,6 @@ export default function Home() {
       return;
     }
 
-    /*
-     * Do absolutely nothing while the preference
-     * is still being read.
-     */
     if (musicEnabled === null) {
       return;
     }
@@ -541,7 +565,11 @@ export default function Home() {
       return;
     }
 
-    audio.loop = true;
+    /*
+     * IMPORTANT:
+     * Music must play only once.
+     */
+    audio.loop = false;
     audio.preload = "auto";
 
     audio.volume = Math.min(
@@ -554,9 +582,6 @@ export default function Home() {
 
     const handlePlay =
       (): void => {
-        musicStartedRef.current =
-          true;
-
         setMusicPlaying(true);
       };
 
@@ -567,10 +592,15 @@ export default function Home() {
 
     const handleEnded =
       (): void => {
-        musicStartedRef.current =
-          false;
-
         setMusicPlaying(false);
+
+        /*
+         * Keep musicStartedRef TRUE.
+         *
+         * This is important:
+         * once the track has finished, clicks
+         * and fields must NOT restart it.
+         */
       };
 
     audio.addEventListener(
@@ -590,17 +620,18 @@ export default function Home() {
 
     /*
      * ==========================================================
-     * USER HAS MUSIC OFF
+     * MUSIC OFF
      * ==========================================================
-     *
-     * Absolutely no autoplay.
-     * Absolutely no first-click playback.
      */
+
     if (!musicEnabled) {
       audio.pause();
 
       musicStartedRef.current =
         false;
+
+      firstInteractionHandledRef.current =
+        true;
 
       setMusicPlaying(false);
 
@@ -624,7 +655,7 @@ export default function Home() {
 
     /*
      * ==========================================================
-     * USER HAS MUSIC ON
+     * MUSIC ON
      * ==========================================================
      */
 
@@ -632,69 +663,95 @@ export default function Home() {
       false;
 
     /*
-     * Try to play immediately when page loads.
+     * This function is allowed to start music
+     * only ONCE.
      */
-    const tryStartMusic =
+    const playMusicOnce =
       (): void => {
         /*
-         * Double protection:
+         * Already started?
          *
-         * Never start if the preference has
-         * changed to OFF.
+         * Then NEVER start again.
          */
         if (
-          musicEnabled !== true ||
           musicStartedRef.current
         ) {
           return;
         }
 
+        /*
+         * Current preference must still be ON.
+         */
+        if (
+          musicEnabledRef.current !==
+          true
+        ) {
+          return;
+        }
+
+        /*
+         * Mark it BEFORE calling play().
+         *
+         * This prevents multiple simultaneous
+         * interactions from calling play() twice.
+         */
+        musicStartedRef.current =
+          true;
+
         void audio
           .play()
           .then(() => {
             /*
-             * Re-check preference after play()
-             * resolves. This prevents a stale
-             * promise from starting music after
-             * the user has switched it OFF.
+             * User may have turned music OFF
+             * while play() was resolving.
+             *
+             * Check the current ref, not the old
+             * React state closure.
              */
             if (
-              musicEnabled !== true
+              musicEnabledRef.current !==
+              true
             ) {
               audio.pause();
 
+              musicStartedRef.current =
+                false;
+
+              setMusicPlaying(false);
+
               return;
             }
-
-            musicStartedRef.current =
-              true;
 
             setMusicPlaying(true);
           })
           .catch(() => {
             /*
-             * Autoplay can be blocked by browser.
+             * Browser blocked autoplay.
              *
-             * First user interaction handler
-             * below will try once.
+             * Allow the first user interaction
+             * to try once.
              */
+            musicStartedRef.current =
+              false;
           });
       };
 
     /*
-     * Page-load autoplay attempt.
+     * ==========================================================
+     * PAGE LOAD AUTOPLAY
+     * ==========================================================
      */
-    tryStartMusic();
+
+    playMusicOnce();
 
     /*
      * ==========================================================
-     * FIRST USER INTERACTION FALLBACK
+     * FIRST INTERACTION FALLBACK
      * ==========================================================
      *
-     * This runs ONLY when music preference is ON.
+     * This listener exists ONLY while music is ON.
      *
-     * If user previously turned music OFF,
-     * this listener is never installed.
+     * It is removed after the first attempt.
      */
     const handleFirstInteraction =
       (): void => {
@@ -708,13 +765,7 @@ export default function Home() {
           true;
 
         /*
-         * Preference is still ON here.
-         */
-        tryStartMusic();
-
-        /*
-         * Remove immediately so subsequent clicks
-         * never call play() again.
+         * Remove immediately.
          */
         window.removeEventListener(
           "pointerdown",
@@ -730,6 +781,12 @@ export default function Home() {
           "touchstart",
           handleFirstInteraction,
         );
+
+        /*
+         * If autoplay was blocked,
+         * this is the one allowed retry.
+         */
+        playMusicOnce();
       };
 
     window.addEventListener(
@@ -815,8 +872,10 @@ export default function Home() {
       audio.pause();
 
       /*
-       * Reset to beginning so the next manual
-       * ON starts cleanly.
+       * Reset to beginning.
+       *
+       * This is only for a future EXPLICIT ON.
+       * It will NOT automatically restart.
        */
       try {
         audio.currentTime = 0;
@@ -827,11 +886,17 @@ export default function Home() {
       musicStartedRef.current =
         false;
 
+      musicEnabledRef.current =
+        false;
+
+      firstInteractionHandledRef.current =
+        true;
+
       setMusicPlaying(false);
       setMusicEnabled(false);
 
       /*
-       * Save explicit OFF preference.
+       * Save OFF preference.
        */
       try {
         window.localStorage.setItem(
@@ -847,9 +912,12 @@ export default function Home() {
 
     /*
      * ==========================================================
-     * TURN MUSIC ON
+     * TURN MUSIC ON MANUALLY
      * ==========================================================
      */
+
+    musicEnabledRef.current =
+      true;
 
     setMusicEnabled(true);
 
@@ -871,25 +939,43 @@ export default function Home() {
     );
 
     /*
-     * Reset first-interaction state because the
-     * user has explicitly enabled music.
+     * Explicit control click is allowed to
+     * start a new manual music session.
      */
+    musicStartedRef.current =
+      true;
+
     firstInteractionHandledRef.current =
       true;
 
     void audio
       .play()
       .then(() => {
-        musicStartedRef.current =
-          true;
+        /*
+         * Make sure user did not switch OFF
+         * while play() was resolving.
+         */
+        if (
+          musicEnabledRef.current !==
+          true
+        ) {
+          audio.pause();
+
+          musicStartedRef.current =
+            false;
+
+          setMusicPlaying(false);
+
+          return;
+        }
 
         setMusicPlaying(true);
       })
       .catch(() => {
-        /*
-         * Direct button click normally satisfies
-         * browser autoplay requirements.
-         */
+        musicStartedRef.current =
+          false;
+
+        setMusicPlaying(false);
       });
   }
 
@@ -1239,8 +1325,8 @@ export default function Home() {
     validationMessage === null
       ? null
       : t.validation[
-      validationMessage
-      ];
+          validationMessage
+        ];
 
   const selectedLocation =
     profile.placeOfBirth;
@@ -1255,56 +1341,56 @@ export default function Home() {
     suggestions.length > 0 &&
       locationPopupPosition !== null &&
       typeof document !==
-      "undefined"
+        "undefined"
       ? createPortal(
-        <div
-          id="astro-location-list"
-          className="astro-suggestions fixed z-[99999] overflow-hidden rounded-xl border border-[#ded8ce] bg-white p-1 shadow-[0_18px_45px_rgba(54,43,29,0.18)]"
-          style={{
-            top:
-              locationPopupPosition.top,
-            left:
-              locationPopupPosition.left,
-            width:
-              locationPopupPosition.width,
-          }}
-          role="listbox"
-          aria-label={
-            t.profile.placeOfBirth
-          }
-        >
-          {suggestions.map(
-            (suggestion) => (
-              <button
-                key={
-                  suggestion.placeId
-                }
-                type="button"
-                role="option"
-                onClick={() =>
-                  void selectLocation(
-                    suggestion,
-                  )
-                }
-                className="astro-suggestion-item block w-full rounded-lg px-3 py-3 text-left"
-              >
-                <p className="text-sm font-medium text-[#394253]">
-                  {
-                    suggestion.name
+          <div
+            id="astro-location-list"
+            className="astro-suggestions fixed z-[99999] overflow-hidden rounded-xl border border-[#ded8ce] bg-white p-1 shadow-[0_18px_45px_rgba(54,43,29,0.18)]"
+            style={{
+              top:
+                locationPopupPosition.top,
+              left:
+                locationPopupPosition.left,
+              width:
+                locationPopupPosition.width,
+            }}
+            role="listbox"
+            aria-label={
+              t.profile.placeOfBirth
+            }
+          >
+            {suggestions.map(
+              (suggestion) => (
+                <button
+                  key={
+                    suggestion.placeId
                   }
-                </p>
+                  type="button"
+                  role="option"
+                  onClick={() =>
+                    void selectLocation(
+                      suggestion,
+                    )
+                  }
+                  className="astro-suggestion-item block w-full rounded-lg px-3 py-3 text-left"
+                >
+                  <p className="text-sm font-medium text-[#394253]">
+                    {
+                      suggestion.name
+                    }
+                  </p>
 
-                <p className="mt-1 text-[11px] leading-4 text-[#8b94a2]">
-                  {
-                    suggestion.displayName
-                  }
-                </p>
-              </button>
-            ),
-          )}
-        </div>,
-        document.body,
-      )
+                  <p className="mt-1 text-[11px] leading-4 text-[#8b94a2]">
+                    {
+                      suggestion.displayName
+                    }
+                  </p>
+                </button>
+              ),
+            )}
+          </div>,
+          document.body,
+        )
       : null;
 
   return (
@@ -1353,10 +1439,11 @@ export default function Home() {
                     onClick={
                       handleMusicToggle
                     }
-                    className={`mr-3 flex h-9 w-9 shrink-0 items-center justify-center rounded-full border transition-all ${musicPlaying
+                    className={`mr-3 flex h-9 w-9 shrink-0 items-center justify-center rounded-full border transition-all ${
+                      musicPlaying
                         ? "border-[#6b4f8a]/30 bg-[#6b4f8a]/10 text-[#6b4f8a]"
                         : "border-[#ddd7cd] bg-white text-[#8a93a3] hover:border-[#6b4f8a]/30 hover:text-[#6b4f8a]"
-                      }`}
+                    }`}
                     aria-label={
                       musicPlaying
                         ? language ===
@@ -1482,7 +1569,6 @@ export default function Home() {
             <audio
               ref={musicRef}
               src="/audio/om.mp3"
-              loop
               preload="auto"
               aria-hidden="true"
             />
@@ -1510,7 +1596,7 @@ export default function Home() {
 
               <h2 className="astro-hero-title text-3xl font-semibold tracking-tight text-[#303746] sm:text-4xl">
                 {language ===
-                  "en" ? (
+                "en" ? (
                   <>
                     {
                       t.hero
@@ -1678,14 +1764,14 @@ export default function Home() {
                         className="block text-xs font-medium text-[#4f596a]"
                       >
                         {language ===
-                          "hi"
+                        "hi"
                           ? "परिणाम की भाषा"
                           : "Result Language"}
                       </label>
 
                       <span className="text-[10px] text-[#9aa1ad]">
                         {language ===
-                          "hi"
+                        "hi"
                           ? "भाषा चुनें"
                           : "Choose language"}
                       </span>
@@ -1696,7 +1782,7 @@ export default function Home() {
                       role="group"
                       aria-label={
                         language ===
-                          "hi"
+                        "hi"
                           ? "परिणाम की भाषा"
                           : "Result Language"
                       }
@@ -1724,11 +1810,12 @@ export default function Home() {
                           language ===
                           "hi"
                         }
-                        className={`rounded-lg px-3 py-3 text-sm font-medium transition-all ${language ===
-                            "hi"
+                        className={`rounded-lg px-3 py-3 text-sm font-medium transition-all ${
+                          language ===
+                          "hi"
                             ? "bg-white text-[#6b4f8a] shadow-sm ring-1 ring-[#6b4f8a]/10"
                             : "text-[#737d8d] hover:bg-white/70 hover:text-[#4f596a]"
-                          } disabled:cursor-not-allowed disabled:opacity-50`}
+                        } disabled:cursor-not-allowed disabled:opacity-50`}
                       >
                         <span className="block">
                           हिंदी
@@ -1761,11 +1848,12 @@ export default function Home() {
                           language ===
                           "en"
                         }
-                        className={`rounded-lg px-3 py-3 text-sm font-medium transition-all ${language ===
-                            "en"
+                        className={`rounded-lg px-3 py-3 text-sm font-medium transition-all ${
+                          language ===
+                          "en"
                             ? "bg-white text-[#6b4f8a] shadow-sm ring-1 ring-[#6b4f8a]/10"
                             : "text-[#737d8d] hover:bg-white/70 hover:text-[#4f596a]"
-                          } disabled:cursor-not-allowed disabled:opacity-50`}
+                        } disabled:cursor-not-allowed disabled:opacity-50`}
                       >
                         <span className="block">
                           English
@@ -1779,7 +1867,7 @@ export default function Home() {
 
                     <p className="mt-2 text-[10px] leading-4 text-[#98a0ad]">
                       {language ===
-                        "hi"
+                      "hi"
                         ? "आप ज्योतिषीय परिणाम हिंदी या अंग्रेज़ी में प्राप्त कर सकते हैं।"
                         : "Choose whether your astrology results should be in English or Hindi."}
                     </p>
@@ -1863,7 +1951,7 @@ export default function Home() {
                             const hour =
                               String(
                                 index +
-                                1,
+                                  1,
                               ).padStart(
                                 2,
                                 "0",
@@ -2026,12 +2114,13 @@ export default function Home() {
                             .placePlaceholder
                         }
                         autoComplete="off"
-                        className={`astro-input w-full rounded-xl border bg-white px-4 py-3 pr-10 text-sm outline-none ${locationLoading
+                        className={`astro-input w-full rounded-xl border bg-white px-4 py-3 pr-10 text-sm outline-none ${
+                          locationLoading
                             ? "border-[#6b4f8a]/50"
                             : locationSelected
                               ? "border-emerald-400/50"
                               : "border-[#d8d2c7]"
-                          }`}
+                        }`}
                         aria-autocomplete="list"
                         aria-expanded={
                           suggestions.length >
@@ -2261,57 +2350,57 @@ export default function Home() {
               <div className="flex-1 space-y-4 overflow-y-auto p-5 sm:p-6">
                 {messages.length ===
                   0 && (
-                    <div className="flex min-h-[420px] items-center justify-center">
-                      <div className="max-w-md text-center">
-                        <div className="astro-welcome-om mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-[#6b4f8a]/10 text-3xl text-[#6b4f8a]">
-                          ॐ
-                        </div>
+                  <div className="flex min-h-[420px] items-center justify-center">
+                    <div className="max-w-md text-center">
+                      <div className="astro-welcome-om mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-[#6b4f8a]/10 text-3xl text-[#6b4f8a]">
+                        ॐ
+                      </div>
 
-                        <h4 className="text-lg font-semibold text-[#3b4352]">
-                          {
-                            t.chat
-                              .welcomeTitle
-                          }
-                        </h4>
+                      <h4 className="text-lg font-semibold text-[#3b4352]">
+                        {
+                          t.chat
+                            .welcomeTitle
+                        }
+                      </h4>
 
-                        <p className="mt-2 text-sm leading-6 text-[#8a93a3]">
-                          {
-                            t.chat
-                              .welcomeDescription
-                          }
-                        </p>
+                      <p className="mt-2 text-sm leading-6 text-[#8a93a3]">
+                        {
+                          t.chat
+                            .welcomeDescription
+                        }
+                      </p>
 
-                        <div className="mt-5 flex flex-wrap justify-center gap-2">
-                          {t.chat.quickQuestions.map(
-                            (
-                              question,
-                            ) => (
-                              <button
-                                key={
-                                  question
-                                }
-                                type="button"
-                                onClick={() => {
-                                  setInput(
-                                    question,
-                                  );
+                      <div className="mt-5 flex flex-wrap justify-center gap-2">
+                        {t.chat.quickQuestions.map(
+                          (
+                            question,
+                          ) => (
+                            <button
+                              key={
+                                question
+                              }
+                              type="button"
+                              onClick={() => {
+                                setInput(
+                                  question,
+                                );
 
-                                  setValidationMessage(
-                                    null,
-                                  );
-                                }}
-                                className="astro-chip rounded-full border border-[#ddd7cd] bg-[#faf9f6] px-3 py-2 text-xs text-[#697282]"
-                              >
-                                {
-                                  question
-                                }
-                              </button>
-                            ),
-                          )}
-                        </div>
+                                setValidationMessage(
+                                  null,
+                                );
+                              }}
+                              className="astro-chip rounded-full border border-[#ddd7cd] bg-[#faf9f6] px-3 py-2 text-xs text-[#697282]"
+                            >
+                              {
+                                question
+                              }
+                            </button>
+                          ),
+                        )}
                       </div>
                     </div>
-                  )}
+                  </div>
+                )}
 
                 {messages.map(
                   (
@@ -2320,25 +2409,27 @@ export default function Home() {
                   ) => (
                     <div
                       key={`${message.role}-${index}`}
-                      className={`astro-message flex ${message.role ===
-                          "user"
+                      className={`astro-message flex ${
+                        message.role ===
+                        "user"
                           ? "justify-end"
                           : "justify-start"
-                        }`}
+                      }`}
                       style={{
                         animationDelay: `${Math.min(
                           index *
-                          70,
+                            70,
                           500,
                         )}ms`,
                       }}
                     >
                       <div
-                        className={`max-w-[88%] rounded-2xl px-4 py-3 text-sm leading-6 sm:max-w-[78%] ${message.role ===
-                            "user"
+                        className={`max-w-[88%] rounded-2xl px-4 py-3 text-sm leading-6 sm:max-w-[78%] ${
+                          message.role ===
+                          "user"
                             ? "rounded-br-md bg-[#6b4f8a] text-white"
                             : "rounded-bl-md border border-[#e2ddd4] bg-[#f8f6f2] text-[#4d5666]"
-                          }`}
+                        }`}
                       >
                         <div className="whitespace-pre-wrap">
                           {
@@ -2497,7 +2588,7 @@ export default function Home() {
                   <p className="mt-2 max-w-3xl text-[11px] leading-5 text-[#737d8d]">
                     <span className="font-semibold text-[#565f70]">
                       {language ===
-                        "hi"
+                      "hi"
                         ? "अस्वीकरण:"
                         : "Disclaimer:"}
                     </span>{" "}
