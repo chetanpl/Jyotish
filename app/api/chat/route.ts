@@ -136,10 +136,16 @@ type GeminiCandidate = {
   content?: {
     parts?: GeminiPart[];
   };
+  finishReason?: string;
 };
 
 type GeminiResponse = {
   candidates?: GeminiCandidate[];
+};
+
+type GeminiContent = {
+  role: "user" | "model";
+  parts: GeminiPart[];
 };
 
 /*
@@ -152,10 +158,56 @@ const MODEL =
   process.env.GEMINI_MODEL ||
   "gemini-3.8-flash";
 
+/*
+ * Optional fallback model.
+ *
+ * Add this to .env.local if you want a second model:
+ *
+ * GEMINI_FALLBACK_MODEL=your-available-model
+ *
+ * If it is not configured, only GEMINI_MODEL is used.
+ */
+const FALLBACK_MODEL =
+  process.env.GEMINI_FALLBACK_MODEL?.trim() ||
+  "";
+
+const MODELS = Array.from(
+  new Set(
+    [
+      MODEL,
+      FALLBACK_MODEL,
+    ].filter(
+      (value) =>
+        value.trim().length > 0,
+    ),
+  ),
+);
+
 const MAX_GEMINI_RETRIES = 3;
+
 const INITIAL_RETRY_DELAY = 1000;
 
+const MAX_OUTPUT_TOKENS = 1900;
+
+/*
+ * Prevent Gemini fetch from hanging forever.
+ */
+const GEMINI_REQUEST_TIMEOUT_MS =
+  45_000;
+
+/*
+ * Maximum number of continuation requests
+ * when Gemini stops because of MAX_TOKENS.
+ */
+const MAX_CONTINUATIONS = 1;
+
+/*
+ * Email should never block the API forever.
+ */
+const EMAIL_TIMEOUT_MS = 15_000;
+
 const MAX_MESSAGES = 30;
+
 const MAX_MESSAGE_LENGTH = 6000;
 
 const ZODIAC_SIGNS = [
@@ -184,8 +236,14 @@ const NAKSHATRAS = [
   { name: "Pushya", lord: "Saturn" },
   { name: "Ashlesha", lord: "Mercury" },
   { name: "Magha", lord: "Ketu" },
-  { name: "Purva Phalguni", lord: "Venus" },
-  { name: "Uttara Phalguni", lord: "Sun" },
+  {
+    name: "Purva Phalguni",
+    lord: "Venus",
+  },
+  {
+    name: "Uttara Phalguni",
+    lord: "Sun",
+  },
   { name: "Hasta", lord: "Moon" },
   { name: "Chitra", lord: "Mars" },
   { name: "Swati", lord: "Rahu" },
@@ -193,17 +251,35 @@ const NAKSHATRAS = [
   { name: "Anuradha", lord: "Saturn" },
   { name: "Jyeshtha", lord: "Mercury" },
   { name: "Mula", lord: "Ketu" },
-  { name: "Purva Ashadha", lord: "Venus" },
-  { name: "Uttara Ashadha", lord: "Sun" },
+  {
+    name: "Purva Ashadha",
+    lord: "Venus",
+  },
+  {
+    name: "Uttara Ashadha",
+    lord: "Sun",
+  },
   { name: "Shravana", lord: "Moon" },
   { name: "Dhanishta", lord: "Mars" },
-  { name: "Shatabhisha", lord: "Rahu" },
-  { name: "Purva Bhadrapada", lord: "Jupiter" },
-  { name: "Uttara Bhadrapada", lord: "Saturn" },
+  {
+    name: "Shatabhisha",
+    lord: "Rahu",
+  },
+  {
+    name: "Purva Bhadrapada",
+    lord: "Jupiter",
+  },
+  {
+    name: "Uttara Bhadrapada",
+    lord: "Saturn",
+  },
   { name: "Revati", lord: "Mercury" },
 ] as const;
 
-const DASHA_YEARS: Record<string, number> = {
+const DASHA_YEARS: Record<
+  string,
+  number
+> = {
   Ketu: 7,
   Venus: 20,
   Sun: 6,
@@ -300,18 +376,6 @@ function isBirthLocation(
 
   const longitude =
     value.longitude;
-
-  /*
-  |--------------------------------------------------------------------------
-  | IMPORTANT
-  |--------------------------------------------------------------------------
-  |
-  | timezone can now be:
-  |
-  | number  -> e.g. 5.5
-  | string  -> e.g. "Europe/London"
-  |
-  */
 
   const validTimezone =
     (
@@ -410,11 +474,15 @@ function getGeminiApiKeys(): string[] {
       );
     })
     .sort((a, b) => {
-      if (a === "GEMINI_API_KEY") {
+      if (
+        a === "GEMINI_API_KEY"
+      ) {
         return -1;
       }
 
-      if (b === "GEMINI_API_KEY") {
+      if (
+        b === "GEMINI_API_KEY"
+      ) {
         return 1;
       }
 
@@ -454,9 +522,11 @@ function getGeminiApiKeys(): string[] {
 function sleep(
   ms: number,
 ): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
+  return new Promise(
+    (resolve) => {
+      setTimeout(resolve, ms);
+    },
+  );
 }
 
 function normalizeDegree(
@@ -658,21 +728,6 @@ function resolveTimezoneOffset(
     minute: number;
   },
 ): number {
-  /*
-  |--------------------------------------------------------------------------
-  | Numeric timezone
-  |--------------------------------------------------------------------------
-  |
-  | Supports existing profiles where timezone was already stored as
-  | a UTC offset, for example:
-  |
-  | 0
-  | 1
-  | 5.5
-  | -4
-  |
-  */
-
   if (
     typeof timezone ===
     "number"
@@ -689,18 +744,6 @@ function resolveTimezoneOffset(
 
     return timezone;
   }
-
-  /*
-  |--------------------------------------------------------------------------
-  | Numeric string timezone
-  |--------------------------------------------------------------------------
-  |
-  | Supports values such as:
-  |
-  | "5.5"
-  | "-4"
-  |
-  */
 
   const timezoneValue =
     timezone.trim();
@@ -726,21 +769,6 @@ function resolveTimezoneOffset(
     return numericTimezone;
   }
 
-  /*
-  |--------------------------------------------------------------------------
-  | IANA timezone
-  |--------------------------------------------------------------------------
-  |
-  | Example:
-  |
-  | Europe/London
-  | Asia/Kolkata
-  | America/New_York
-  |
-  | The frontend timezone API returns this kind of value.
-  |
-  */
-
   const resolvedTimezoneId =
     timezoneId?.trim() ||
     timezoneValue;
@@ -760,12 +788,6 @@ function resolveTimezoneOffset(
     hour,
     minute,
   } = birthDateTime;
-
-  /*
-  |--------------------------------------------------------------------------
-  | Treat the entered birth time as a wall-clock/local time.
-  |--------------------------------------------------------------------------
-  */
 
   const localAsUtc =
     Date.UTC(
@@ -887,13 +909,6 @@ function resolveTimezoneOffset(
         "Unable to determine birth timezone offset.",
       );
     }
-
-    /*
-    |--------------------------------------------------------------------------
-    | Convert the timezone-local representation back to UTC-like
-    | milliseconds and compare it with the entered wall-clock value.
-    |--------------------------------------------------------------------------
-    */
 
     const zonedAsUtc =
       Date.UTC(
@@ -1500,15 +1515,6 @@ async function calculateSwissChart(
       profile.timeOfBirth,
     );
 
-  /*
-  |--------------------------------------------------------------------------
-  | FIX:
-  | Frontend can send "Europe/London", "Asia/Kolkata", etc.
-  | Resolve that timezone to the correct offset for the actual
-  | birth date/time, including DST.
-  |--------------------------------------------------------------------------
-  */
-
   const timezone =
     resolveTimezoneOffset(
       location.timezone,
@@ -1591,11 +1597,6 @@ async function calculateSwissChart(
     /*
     |--------------------------------------------------------------------------
     | JULIAN DAY
-    |--------------------------------------------------------------------------
-    |
-    | swisseph-wasm uses:
-    |
-    | julday(year, month, day, hour)
     |--------------------------------------------------------------------------
     */
 
@@ -2098,13 +2099,6 @@ async function calculateSwissChart(
         utcBirthTime:
           birthDateUTC.toISOString(),
 
-        /*
-        |--------------------------------------------------------------------------
-        | This is now always the numeric UTC offset actually used by
-        | Swiss Ephemeris.
-        |--------------------------------------------------------------------------
-        */
-
         timezone,
 
         timezoneId:
@@ -2211,6 +2205,11 @@ function parseGeminiResponse(
       continue;
     }
 
+    const finishReason =
+      getString(
+        candidate.finishReason,
+      );
+
     const contentValue =
       candidate.content;
 
@@ -2219,7 +2218,10 @@ function parseGeminiResponse(
         contentValue,
       )
     ) {
-      parsedCandidates.push({});
+      parsedCandidates.push({
+        finishReason,
+      });
+
       continue;
     }
 
@@ -2231,6 +2233,7 @@ function parseGeminiResponse(
     ) {
       parsedCandidates.push({
         content: {},
+        finishReason,
       });
 
       continue;
@@ -2258,12 +2261,164 @@ function parseGeminiResponse(
       content: {
         parts,
       },
+
+      finishReason,
     });
   }
 
   return {
     candidates:
       parsedCandidates,
+  };
+}
+
+/*
+|--------------------------------------------------------------------------
+| GEMINI FETCH
+|--------------------------------------------------------------------------
+*/
+
+async function fetchGemini(
+  url: string,
+  apiKey: string,
+  body: unknown,
+): Promise<Response> {
+  const controller =
+    new AbortController();
+
+  const timeout =
+    setTimeout(
+      () => {
+        controller.abort();
+      },
+      GEMINI_REQUEST_TIMEOUT_MS,
+    );
+
+  try {
+    return await fetch(
+      url,
+      {
+        method: "POST",
+
+        headers: {
+          "Content-Type":
+            "application/json",
+
+          "x-goog-api-key":
+            apiKey,
+        },
+
+        body:
+          JSON.stringify(body),
+
+        signal:
+          controller.signal,
+      },
+    );
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/*
+|--------------------------------------------------------------------------
+| GEMINI ERROR HELPERS
+|--------------------------------------------------------------------------
+*/
+
+function isRetryableGeminiStatus(
+  status: number,
+): boolean {
+  return (
+    status === 408 ||
+    status === 500 ||
+    status === 502 ||
+    status === 503 ||
+    status === 504
+  );
+}
+
+function getGeminiErrorMessage(
+  status: number,
+  responseText: string,
+): string {
+  if (
+    status === 429
+  ) {
+    return (
+      "Gemini API usage limit or quota exceeded."
+    );
+  }
+
+  if (
+    status === 401 ||
+    status === 403
+  ) {
+    return (
+      "Gemini API key is invalid or unauthorized."
+    );
+  }
+
+  if (
+    status === 404
+  ) {
+    return (
+      "Gemini model was not found or is not available."
+    );
+  }
+
+  if (
+    isRetryableGeminiStatus(
+      status,
+    )
+  ) {
+    return (
+      `Gemini temporarily unavailable (${status}).`
+    );
+  }
+
+  return (
+    responseText ||
+    `Gemini API returned HTTP ${status}.`
+  );
+}
+
+/*
+|--------------------------------------------------------------------------
+| GEMINI REQUEST BODY
+|--------------------------------------------------------------------------
+*/
+
+function buildGeminiRequestBody(
+  astrologyContext: string,
+  contents: GeminiContent[],
+): Record<string, unknown> {
+  return {
+    systemInstruction: {
+      parts: [
+        {
+          text:
+            astrologyContext,
+        },
+      ],
+    },
+
+    contents,
+
+    generationConfig: {
+      /*
+      |--------------------------------------------------------------------------
+      | IMPORTANT:
+      | Increased from 1600 to 4096.
+      |--------------------------------------------------------------------------
+      */
+
+      maxOutputTokens:
+        MAX_OUTPUT_TOKENS,
+
+      temperature:
+        0.7,
+    },
   };
 }
 
@@ -2288,7 +2443,8 @@ async function askGemini(
     );
   }
 
-  const contents =
+  const contents:
+    GeminiContent[] =
     messages
       .filter(
         (message) =>
@@ -2322,153 +2478,325 @@ async function askGemini(
     );
   }
 
-  const url =
-    `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
-
   let lastError =
     "Unknown Gemini error.";
 
+  /*
+  |--------------------------------------------------------------------------
+  | Try configured models.
+  |--------------------------------------------------------------------------
+  */
+
   for (
-    let keyIndex = 0;
-    keyIndex <
-      apiKeys.length;
-    keyIndex += 1
+    const currentModel of
+      MODELS
   ) {
-    const apiKey =
-      apiKeys[keyIndex];
+    const url =
+      `https://generativelanguage.googleapis.com/v1beta/models/${currentModel}:generateContent`;
 
-    if (!apiKey) {
-      continue;
-    }
+    console.log(
+      `Gemini: using model ${currentModel}`,
+    );
 
-    let response:
-      | Response
-      | null = null;
-
-    let responseText =
-      "";
+    /*
+    |--------------------------------------------------------------------------
+    | Try API keys.
+    |--------------------------------------------------------------------------
+    */
 
     for (
-      let attempt = 0;
-      attempt <=
-        MAX_GEMINI_RETRIES;
-      attempt += 1
+      let keyIndex = 0;
+      keyIndex <
+        apiKeys.length;
+      keyIndex += 1
     ) {
-      try {
-        response =
-          await fetch(
-            url,
-            {
-              method: "POST",
+      const apiKey =
+        apiKeys[keyIndex];
 
-              headers: {
-                "Content-Type":
-                  "application/json",
+      if (!apiKey) {
+        continue;
+      }
 
-                "x-goog-api-key":
-                  apiKey,
-              },
+      console.log(
+        `Gemini: trying key ${keyIndex + 1}/${apiKeys.length}`,
+      );
 
-              body:
-                JSON.stringify({
-                  systemInstruction: {
-                    parts: [
-                      {
-                        text:
-                          astrologyContext,
-                      },
-                    ],
-                  },
+      /*
+      |--------------------------------------------------------------------------
+      | Retry temporary server errors.
+      |--------------------------------------------------------------------------
+      */
 
-                  contents,
+      let response:
+        | Response
+        | null = null;
 
-                  generationConfig: {
-                    maxOutputTokens:
-                      1600,
-                  },
-                }),
-            },
-          );
+      let responseText =
+        "";
 
-        responseText =
-          await response.text();
-
-        if (response.ok) {
-          break;
-        }
-
-        if (
-          response.status === 429
-        ) {
-          lastError =
-            "Gemini API usage limit or quota exceeded.";
-
-          break;
-        }
-
-        if (
-          response.status === 401 ||
-          response.status === 403
-        ) {
-          lastError =
-            responseText;
-
-          break;
-        }
-
-        const retryable =
-          response.status === 408 ||
-          response.status === 500 ||
-          response.status === 502 ||
-          response.status === 503 ||
-          response.status === 504;
-
-        if (
-          retryable &&
-          attempt <
-            MAX_GEMINI_RETRIES
-        ) {
-          const delay =
-            INITIAL_RETRY_DELAY *
-              2 ** attempt +
-            Math.floor(
-              Math.random() * 500,
+      for (
+        let attempt = 0;
+        attempt <=
+          MAX_GEMINI_RETRIES;
+        attempt += 1
+      ) {
+        try {
+          const requestBody =
+            buildGeminiRequestBody(
+              astrologyContext,
+              contents,
             );
 
-          await sleep(delay);
+          response =
+            await fetchGemini(
+              url,
+              apiKey,
+              requestBody,
+            );
 
-          continue;
-        }
+          responseText =
+            await response.text();
 
-        lastError =
-          responseText;
+          /*
+          |--------------------------------------------------------------------------
+          | SUCCESS
+          |--------------------------------------------------------------------------
+          */
 
-        break;
-      } catch (error) {
-        lastError =
-          error instanceof Error
-            ? error.message
-            : "Network error.";
+          if (response.ok) {
+            break;
+          }
 
-        if (
-          attempt >=
-          MAX_GEMINI_RETRIES
-        ) {
-          break;
-        }
+          /*
+          |--------------------------------------------------------------------------
+          | QUOTA / RATE LIMIT
+          |--------------------------------------------------------------------------
+          |
+          | Do not waste retries on the same key.
+          | Move to the next key.
+          |--------------------------------------------------------------------------
+          */
 
-        const delay =
-          INITIAL_RETRY_DELAY *
-            2 ** attempt +
-          Math.floor(
-            Math.random() * 500,
+          if (
+            response.status ===
+            429
+          ) {
+            lastError =
+              getGeminiErrorMessage(
+                response.status,
+                responseText,
+              );
+
+            console.warn(
+              `Gemini key ${keyIndex + 1}: 429 rate limit.`,
+            );
+
+            break;
+          }
+
+          /*
+          |--------------------------------------------------------------------------
+          | INVALID KEY
+          |--------------------------------------------------------------------------
+          */
+
+          if (
+            response.status ===
+              401 ||
+            response.status ===
+              403
+          ) {
+            lastError =
+              getGeminiErrorMessage(
+                response.status,
+                responseText,
+              );
+
+            console.warn(
+              `Gemini key ${keyIndex + 1}: unauthorized.`,
+            );
+
+            break;
+          }
+
+          /*
+          |--------------------------------------------------------------------------
+          | MODEL NOT FOUND
+          |--------------------------------------------------------------------------
+          */
+
+          if (
+            response.status ===
+            404
+          ) {
+            lastError =
+              getGeminiErrorMessage(
+                response.status,
+                responseText,
+              );
+
+            console.error(
+              `Gemini model ${currentModel} is unavailable.`,
+              responseText,
+            );
+
+            /*
+            |--------------------------------------------------------------------------
+            | Stop this model and try fallback model.
+            |--------------------------------------------------------------------------
+            */
+
+            break;
+          }
+
+          /*
+          |--------------------------------------------------------------------------
+          | TEMPORARY SERVER ERROR
+          |--------------------------------------------------------------------------
+          */
+
+          if (
+            isRetryableGeminiStatus(
+              response.status,
+            )
+          ) {
+            lastError =
+              getGeminiErrorMessage(
+                response.status,
+                responseText,
+              );
+
+            console.warn(
+              `Gemini ${currentModel}, key ${
+                keyIndex + 1
+              }: HTTP ${
+                response.status
+              }, attempt ${
+                attempt + 1
+              }/${
+                MAX_GEMINI_RETRIES + 1
+              }`,
+            );
+
+            if (
+              attempt <
+              MAX_GEMINI_RETRIES
+            ) {
+              /*
+              |--------------------------------------------------------------------------
+              | Exponential backoff + jitter.
+              |
+              | 1s
+              | 2s
+              | 4s
+              | ...
+              |--------------------------------------------------------------------------
+              */
+
+              const delay =
+                INITIAL_RETRY_DELAY *
+                  2 ** attempt +
+                Math.floor(
+                  Math.random() *
+                    500,
+                );
+
+              console.log(
+                `Gemini: retrying in ${delay}ms...`,
+              );
+
+              await sleep(
+                delay,
+              );
+
+              continue;
+            }
+
+            /*
+            |--------------------------------------------------------------------------
+            | All retries for this key failed.
+            | Move to next key.
+            |--------------------------------------------------------------------------
+            */
+
+            break;
+          }
+
+          /*
+          |--------------------------------------------------------------------------
+          | OTHER ERROR
+          |--------------------------------------------------------------------------
+          */
+
+          lastError =
+            getGeminiErrorMessage(
+              response.status,
+              responseText,
+            );
+
+          console.error(
+            `Gemini key ${
+              keyIndex + 1
+            } failed:`,
+            responseText,
           );
 
-        await sleep(delay);
-      }
-    }
+          break;
+        } catch (error) {
+          lastError =
+            error instanceof Error
+              ? error.name ===
+                "AbortError"
+                ? "Gemini request timed out."
+                : error.message
+              : "Network error while contacting Gemini.";
 
-    if (response?.ok) {
+          console.error(
+            `Gemini key ${
+              keyIndex + 1
+            } error:`,
+            error,
+          );
+
+          /*
+          |--------------------------------------------------------------------------
+          | Retry network / timeout errors.
+          |--------------------------------------------------------------------------
+          */
+
+          if (
+            attempt <
+            MAX_GEMINI_RETRIES
+          ) {
+            const delay =
+              INITIAL_RETRY_DELAY *
+                2 ** attempt +
+              Math.floor(
+                Math.random() *
+                  500,
+              );
+
+            await sleep(
+              delay,
+            );
+
+            continue;
+          }
+
+          break;
+        }
+      }
+
+      /*
+      |--------------------------------------------------------------------------
+      | Parse successful response.
+      |--------------------------------------------------------------------------
+      */
+
+      if (!response?.ok) {
+        continue;
+      }
+
       let parsed:
         GeminiResponse;
 
@@ -2487,15 +2815,22 @@ async function askGemini(
         lastError =
           "Gemini returned invalid JSON.";
 
+        console.error(
+          "Gemini invalid JSON:",
+          responseText,
+        );
+
         continue;
       }
 
+      const candidate =
+        parsed.candidates?.[0];
+
       const parts =
-        parsed
-          .candidates?.[0]
+        candidate
           ?.content?.parts;
 
-      const text =
+      const firstText =
         Array.isArray(parts)
           ? parts
               .map(
@@ -2506,19 +2841,352 @@ async function askGemini(
               .trim()
           : "";
 
-      if (!text) {
+      if (!firstText) {
         lastError =
           "Gemini returned an empty response.";
+
+        console.warn(
+          `Gemini key ${
+            keyIndex + 1
+          }: empty response.`,
+        );
 
         continue;
       }
 
-      return text;
+      /*
+      |--------------------------------------------------------------------------
+      | CHECK WHETHER GEMINI HIT MAX OUTPUT TOKENS
+      |--------------------------------------------------------------------------
+      */
+
+      const finishReason =
+        candidate?.finishReason;
+
+      console.log(
+        `Gemini finishReason: ${
+          finishReason ??
+          "UNKNOWN"
+        }`,
+      );
+
+      /*
+      |--------------------------------------------------------------------------
+      | NORMAL COMPLETE RESPONSE
+      |--------------------------------------------------------------------------
+      */
+
+      if (
+        finishReason !==
+        "MAX_TOKENS"
+      ) {
+        return firstText;
+      }
+
+      /*
+      |--------------------------------------------------------------------------
+      | MAX_TOKENS
+      |--------------------------------------------------------------------------
+      |
+      | Gemini reached the output limit.
+      |
+      | Instead of returning a cut-off answer,
+      | ask Gemini to continue from exactly where
+      | the previous answer stopped.
+      |--------------------------------------------------------------------------
+      */
+
+      console.warn(
+        "Gemini response reached MAX_TOKENS. Requesting continuation.",
+      );
+
+      let completeAnswer =
+        firstText;
+
+      let continuationContents:
+        GeminiContent[] = [
+          ...contents,
+
+          {
+            role: "model",
+
+            parts: [
+              {
+                text:
+                  firstText,
+              },
+            ],
+          },
+
+          {
+            role: "user",
+
+            parts: [
+              {
+                text:
+                  "Continue the previous answer from exactly where it stopped. Do not repeat anything already written. Complete the unfinished explanation and finish with a proper conclusion. Keep the same language and style.",
+              },
+            ],
+          },
+        ];
+
+      for (
+        let continuationIndex = 0;
+        continuationIndex <
+          MAX_CONTINUATIONS;
+        continuationIndex += 1
+      ) {
+        let continuationResponse:
+          Response | null = null;
+
+        let continuationResponseText =
+          "";
+
+        let continuationSuccess =
+          false;
+
+        for (
+          let attempt = 0;
+          attempt <=
+            MAX_GEMINI_RETRIES;
+          attempt += 1
+        ) {
+          try {
+            continuationResponse =
+              await fetchGemini(
+                url,
+                apiKey,
+                buildGeminiRequestBody(
+                  astrologyContext,
+                  continuationContents,
+                ),
+              );
+
+            continuationResponseText =
+              await continuationResponse.text();
+
+            if (
+              continuationResponse.ok
+            ) {
+              continuationSuccess =
+                true;
+
+              break;
+            }
+
+            if (
+              continuationResponse.status ===
+                429 ||
+              continuationResponse.status ===
+                401 ||
+              continuationResponse.status ===
+                403 ||
+              continuationResponse.status ===
+                404
+            ) {
+              break;
+            }
+
+            if (
+              isRetryableGeminiStatus(
+                continuationResponse.status,
+              ) &&
+              attempt <
+                MAX_GEMINI_RETRIES
+            ) {
+              const delay =
+                INITIAL_RETRY_DELAY *
+                  2 ** attempt +
+                Math.floor(
+                  Math.random() *
+                    500,
+                );
+
+              await sleep(
+                delay,
+              );
+
+              continue;
+            }
+
+            break;
+          } catch (error) {
+            console.error(
+              "Gemini continuation error:",
+              error,
+            );
+
+            if (
+              attempt <
+              MAX_GEMINI_RETRIES
+            ) {
+              const delay =
+                INITIAL_RETRY_DELAY *
+                  2 ** attempt +
+                Math.floor(
+                  Math.random() *
+                    500,
+                );
+
+              await sleep(
+                delay,
+              );
+
+              continue;
+            }
+
+            break;
+          }
+        }
+
+        if (
+          !continuationSuccess ||
+          !continuationResponse?.ok
+        ) {
+          console.warn(
+            "Gemini continuation failed.",
+          );
+
+          /*
+          |--------------------------------------------------------------------------
+          | We already have a valid first part.
+          | Return it rather than returning nothing.
+          |--------------------------------------------------------------------------
+          */
+
+          return completeAnswer;
+        }
+
+        let continuationParsed:
+          GeminiResponse;
+
+        try {
+          const continuationJson:
+            unknown =
+            JSON.parse(
+              continuationResponseText,
+            );
+
+          continuationParsed =
+            parseGeminiResponse(
+              continuationJson,
+            );
+        } catch {
+          console.warn(
+            "Gemini continuation returned invalid JSON.",
+          );
+
+          return completeAnswer;
+        }
+
+        const continuationCandidate =
+          continuationParsed
+            .candidates?.[0];
+
+        const continuationParts =
+          continuationCandidate
+            ?.content?.parts;
+
+        const continuationText =
+          Array.isArray(
+            continuationParts,
+          )
+            ? continuationParts
+                .map(
+                  (part) =>
+                    part.text ?? "",
+                )
+                .join("")
+                .trim()
+            : "";
+
+        if (
+          !continuationText
+        ) {
+          return completeAnswer;
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Append continuation.
+        |--------------------------------------------------------------------------
+        */
+
+        completeAnswer =
+          `${completeAnswer}\n\n${continuationText}`;
+
+        /*
+        |--------------------------------------------------------------------------
+        | If continuation itself also hit MAX_TOKENS,
+        | technically another continuation could be needed.
+        |
+        | MAX_CONTINUATIONS is currently 1 to avoid
+        | unnecessarily long/costly requests.
+        |--------------------------------------------------------------------------
+        */
+
+        if (
+          continuationCandidate?.finishReason ===
+          "MAX_TOKENS"
+        ) {
+          console.warn(
+            "Gemini continuation also reached MAX_TOKENS.",
+          );
+        }
+
+        return completeAnswer.trim();
+      }
+
+      return completeAnswer.trim();
     }
   }
 
+  /*
+  |--------------------------------------------------------------------------
+  | Friendly final errors
+  |--------------------------------------------------------------------------
+  */
+
+  if (
+    lastError.includes(
+      "temporarily unavailable",
+    ) ||
+    lastError.includes(
+      "503",
+    ) ||
+    lastError.includes(
+      "500",
+    ) ||
+    lastError.includes(
+      "502",
+    ) ||
+    lastError.includes(
+      "504",
+    ) ||
+    lastError.includes(
+      "timed out",
+    )
+  ) {
+    throw new Error(
+      "The astrology service is temporarily busy. Please try again in a moment.",
+    );
+  }
+
+  if (
+    lastError.includes(
+      "quota",
+    ) ||
+    lastError.includes(
+      "rate limit",
+    )
+  ) {
+    throw new Error(
+      "The astrology service is temporarily busy. Please try again in a moment.",
+    );
+  }
+
   throw new Error(
-    `All Gemini API keys failed. ${lastError}`,
+    `All Gemini API attempts failed. ${lastError}`,
   );
 }
 
@@ -2803,19 +3471,88 @@ INTERPRETATION RULES
     explain that only one birth profile is currently supported.
 
   15. RESPONSE LENGTH AND COMPLETENESS:
-    Keep responses concise but complete.
-    For normal questions, give a clear answer with
-    approximately 3 to 7 meaningful points.
-    Do not unnecessarily repeat the same information.
-    Always finish the explanation before ending the response.
-    Include a short final summary when the question requires
-    explanation or analysis.
-    Do not start unnecessary sections or long introductions.
+     Keep responses concise, practical, and complete.
+    Answer the user's exact question first.
+    For normal questions, give approximately
+    3 to 7 meaningful points when appropriate.
     For simple questions, keep the answer brief.
-    For detailed questions, use the available response space
-    efficiently and complete the main points before concluding.
-    Never leave the answer incomplete or cut off.
+
+    For detailed questions, provide the most relevant
+    information without unnecessary explanation.
+    Avoid repetition, filler, long introductions,
+    and unnecessary sections.
+    Do not repeat chart information unless it directly
+    supports the answer.
+    Always complete the main answer before adding
+    secondary details.
+    Never intentionally stop in the middle of a sentence.
+    If response space is limited, prioritize:
+    1. The direct answer
+    2. The most important chart-based reasoning
+    3. The practical conclusion
+    Do not sacrifice the main answer for secondary details.
+    End with a clear conclusion when the question requires
+    analysis or explanation.
 `;
+}
+
+/*
+|--------------------------------------------------------------------------
+| EMAIL WITH TIMEOUT
+|--------------------------------------------------------------------------
+*/
+
+async function sendAstroEmailWithTimeout(
+  profile: BirthProfile,
+  question: string,
+  answer: string,
+): Promise<void> {
+  let timeoutId:
+    ReturnType<typeof setTimeout> | undefined;
+
+  try {
+    await Promise.race([
+      sendAstroEmail({
+        profile: {
+          name:
+            profile.name,
+
+          dateOfBirth:
+            profile.dateOfBirth,
+
+          timeOfBirth:
+            profile.timeOfBirth,
+
+          placeOfBirth:
+            profile.placeOfBirth,
+        },
+
+        question,
+
+        answer,
+      }),
+
+      new Promise<never>(
+        (_, reject) => {
+          timeoutId =
+            setTimeout(
+              () => {
+                reject(
+                  new Error(
+                    "Astro email sending timed out.",
+                  ),
+                );
+              },
+              EMAIL_TIMEOUT_MS,
+            );
+        },
+      ),
+    ]);
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
 }
 
 /*
@@ -3116,33 +3853,17 @@ export async function POST(
     | SEND EMAIL
     |--------------------------------------------------------------------------
     |
-    | Email is sent from the server.
-    |
-    | If email fails, the user still receives the
-    | Gemini answer. The failure is logged server-side.
+    | Email failure/timeout must NOT destroy the successful
+    | Gemini response.
     |--------------------------------------------------------------------------
     */
 
     try {
-      await sendAstroEmail({
-        profile: {
-          name:
-            profile.name,
-
-          dateOfBirth:
-            profile.dateOfBirth,
-
-          timeOfBirth:
-            profile.timeOfBirth,
-
-          placeOfBirth:
-            profile.placeOfBirth,
-        },
-
+      await sendAstroEmailWithTimeout(
+        profile,
         question,
-
         answer,
-      });
+      );
 
       console.log(
         "AstroAI email sent successfully.",
