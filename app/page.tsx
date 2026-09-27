@@ -5,7 +5,6 @@ import {
   useEffect,
   useRef,
   useState,
-  type ChangeEvent,
   type KeyboardEvent,
 } from "react";
 import { createPortal } from "react-dom";
@@ -35,6 +34,9 @@ type LocationPopupPosition = {
   left: number;
   width: number;
 };
+
+const MUSIC_STORAGE_KEY =
+  "pal-jyotish-ai-music-enabled";
 
 function extractLocationSuggestions(
   payload: unknown,
@@ -199,6 +201,34 @@ export default function Home() {
   const locationAbortRef =
     useRef<AbortController | null>(null);
 
+  /*
+  |--------------------------------------------------------------------------
+  | Music
+  |--------------------------------------------------------------------------
+  */
+
+  const musicRef =
+    useRef<HTMLAudioElement | null>(null);
+
+  const musicStartedRef =
+    useRef(false);
+
+  const firstInteractionHandledRef =
+    useRef(false);
+
+  const [musicPlaying, setMusicPlaying] =
+    useState(false);
+
+  /*
+   * Important:
+   *
+   * null = preference has not been read yet
+   * true = user wants music ON
+   * false = user explicitly turned music OFF
+   */
+  const [musicEnabled, setMusicEnabled] =
+    useState<boolean | null>(null);
+
   const timeParts =
     formatTime12Hour(
       profile.timeOfBirth,
@@ -235,131 +265,144 @@ export default function Home() {
       });
     }, []);
 
+  /*
+  |--------------------------------------------------------------------------
+  | Location search
+  |--------------------------------------------------------------------------
+  */
+
   useEffect(() => {
-  const query =
-    locationText.trim();
+    const query =
+      locationText.trim();
 
-  if (
-    query.length < 2 ||
-    locationSelected
-  ) {
-    return;
-  }
+    if (
+      query.length < 2 ||
+      locationSelected
+    ) {
+      return;
+    }
 
-  const controller =
-    new AbortController();
+    const controller =
+      new AbortController();
 
-  locationAbortRef.current =
-    controller;
+    locationAbortRef.current =
+      controller;
 
-  const timeoutId =
-    window.setTimeout(
-      async () => {
-        try {
-          const response =
-            await fetch(
-              `/api/location/search?q=${encodeURIComponent(
-                query,
-              )}`,
-              {
-                method: "GET",
-                headers: {
-                  Accept:
-                    "application/json",
+    const timeoutId =
+      window.setTimeout(
+        async () => {
+          try {
+            const response =
+              await fetch(
+                `/api/location/search?q=${encodeURIComponent(
+                  query,
+                )}`,
+                {
+                  method: "GET",
+                  headers: {
+                    Accept:
+                      "application/json",
+                  },
+                  signal:
+                    controller.signal,
                 },
-                signal:
-                  controller.signal,
-              },
+              );
+
+            if (
+              controller.signal.aborted
+            ) {
+              return;
+            }
+
+            if (!response.ok) {
+              setSuggestions([]);
+              setLocationLoading(false);
+              setLocationPopupPosition(
+                null,
+              );
+              return;
+            }
+
+            const payload: unknown =
+              await response.json();
+
+            if (
+              controller.signal.aborted
+            ) {
+              return;
+            }
+
+            const normalized =
+              extractLocationSuggestions(
+                payload,
+              );
+
+            setSuggestions(
+              normalized,
             );
 
-          if (
-            controller.signal.aborted
-          ) {
-            return;
-          }
+            setLocationLoading(false);
 
-          if (!response.ok) {
+            if (
+              normalized.length > 0
+            ) {
+              updateLocationPopupPosition();
+            } else {
+              setLocationPopupPosition(
+                null,
+              );
+            }
+          } catch (error: unknown) {
+            if (
+              error instanceof DOMException &&
+              error.name ===
+              "AbortError"
+            ) {
+              return;
+            }
+
+            if (
+              controller.signal.aborted
+            ) {
+              return;
+            }
+
             setSuggestions([]);
             setLocationLoading(false);
             setLocationPopupPosition(
               null,
             );
-            return;
           }
+        },
+        450,
+      );
 
-          const payload: unknown =
-            await response.json();
+    return () => {
+      window.clearTimeout(
+        timeoutId,
+      );
 
-          if (
-            controller.signal.aborted
-          ) {
-            return;
-          }
+      controller.abort();
 
-          const normalized =
-            extractLocationSuggestions(
-              payload,
-            );
+      if (
+        locationAbortRef.current ===
+        controller
+      ) {
+        locationAbortRef.current =
+          null;
+      }
+    };
+  }, [
+    locationText,
+    locationSelected,
+    updateLocationPopupPosition,
+  ]);
 
-          setSuggestions(
-            normalized,
-          );
-          setLocationLoading(false);
-
-          if (
-            normalized.length > 0
-          ) {
-            updateLocationPopupPosition();
-          } else {
-            setLocationPopupPosition(
-              null,
-            );
-          }
-        } catch (error: unknown) {
-          if (
-            error instanceof DOMException &&
-            error.name ===
-              "AbortError"
-          ) {
-            return;
-          }
-
-          if (
-            controller.signal.aborted
-          ) {
-            return;
-          }
-
-          setSuggestions([]);
-          setLocationLoading(false);
-          setLocationPopupPosition(
-            null,
-          );
-        }
-      },
-      450,
-    );
-
-  return () => {
-    window.clearTimeout(
-      timeoutId,
-    );
-
-    controller.abort();
-
-    if (
-      locationAbortRef.current ===
-      controller
-    ) {
-      locationAbortRef.current =
-        null;
-    }
-  };
-}, [
-  locationText,
-  locationSelected,
-  updateLocationPopupPosition,
-]);
+  /*
+  |--------------------------------------------------------------------------
+  | Keep location dropdown positioned correctly
+  |--------------------------------------------------------------------------
+  */
 
   useEffect(() => {
     if (
@@ -401,11 +444,460 @@ export default function Home() {
     updateLocationPopupPosition,
   ]);
 
+  /*
+  |--------------------------------------------------------------------------
+  | Cleanup location request
+  |--------------------------------------------------------------------------
+  */
+
   useEffect(() => {
     return () => {
       locationAbortRef.current?.abort();
     };
   }, []);
+
+  /*
+  |--------------------------------------------------------------------------
+  | Read music preference
+  |--------------------------------------------------------------------------
+  */
+
+  useEffect(() => {
+    if (
+      !ASTRO_MUSIC_ENABLED ||
+      typeof window === "undefined"
+    ) {
+      setMusicEnabled(false);
+      return;
+    }
+
+    try {
+      const saved =
+        window.localStorage.getItem(
+          MUSIC_STORAGE_KEY,
+        );
+
+      /*
+       * IMPORTANT:
+       *
+       * Only an explicit "false" means the user
+       * has turned music OFF.
+       *
+       * If there is no saved preference, default
+       * to ON for a first-time visitor.
+       */
+      setMusicEnabled(
+        saved !== "false",
+      );
+    } catch {
+      setMusicEnabled(true);
+    }
+  }, []);
+
+  /*
+  |--------------------------------------------------------------------------
+  | Background Om Music
+  |--------------------------------------------------------------------------
+  |
+  | Behaviour:
+  |
+  | - First-time visitor:
+  |     page load -> try autoplay
+  |
+  | - If browser blocks autoplay:
+  |     first user interaction -> play
+  |
+  | - If user previously turned OFF:
+  |     page load -> NO music
+  |     click anywhere -> NO music
+  |     field click -> NO music
+  |     typing -> NO music
+  |
+  | - User must explicitly press the music
+  |   button to turn it ON again.
+  |
+  */
+
+  useEffect(() => {
+    if (
+      !ASTRO_MUSIC_ENABLED ||
+      typeof window === "undefined"
+    ) {
+      return;
+    }
+
+    /*
+     * Do absolutely nothing while the preference
+     * is still being read.
+     */
+    if (musicEnabled === null) {
+      return;
+    }
+
+    const audio =
+      musicRef.current;
+
+    if (!audio) {
+      return;
+    }
+
+    audio.loop = true;
+    audio.preload = "auto";
+
+    audio.volume = Math.min(
+      1,
+      Math.max(
+        0,
+        ASTRO_MUSIC_VOLUME,
+      ),
+    );
+
+    const handlePlay =
+      (): void => {
+        musicStartedRef.current =
+          true;
+
+        setMusicPlaying(true);
+      };
+
+    const handlePause =
+      (): void => {
+        setMusicPlaying(false);
+      };
+
+    const handleEnded =
+      (): void => {
+        musicStartedRef.current =
+          false;
+
+        setMusicPlaying(false);
+      };
+
+    audio.addEventListener(
+      "play",
+      handlePlay,
+    );
+
+    audio.addEventListener(
+      "pause",
+      handlePause,
+    );
+
+    audio.addEventListener(
+      "ended",
+      handleEnded,
+    );
+
+    /*
+     * ==========================================================
+     * USER HAS MUSIC OFF
+     * ==========================================================
+     *
+     * Absolutely no autoplay.
+     * Absolutely no first-click playback.
+     */
+    if (!musicEnabled) {
+      audio.pause();
+
+      musicStartedRef.current =
+        false;
+
+      setMusicPlaying(false);
+
+      return () => {
+        audio.removeEventListener(
+          "play",
+          handlePlay,
+        );
+
+        audio.removeEventListener(
+          "pause",
+          handlePause,
+        );
+
+        audio.removeEventListener(
+          "ended",
+          handleEnded,
+        );
+      };
+    }
+
+    /*
+     * ==========================================================
+     * USER HAS MUSIC ON
+     * ==========================================================
+     */
+
+    firstInteractionHandledRef.current =
+      false;
+
+    /*
+     * Try to play immediately when page loads.
+     */
+    const tryStartMusic =
+      (): void => {
+        /*
+         * Double protection:
+         *
+         * Never start if the preference has
+         * changed to OFF.
+         */
+        if (
+          musicEnabled !== true ||
+          musicStartedRef.current
+        ) {
+          return;
+        }
+
+        void audio
+          .play()
+          .then(() => {
+            /*
+             * Re-check preference after play()
+             * resolves. This prevents a stale
+             * promise from starting music after
+             * the user has switched it OFF.
+             */
+            if (
+              musicEnabled !== true
+            ) {
+              audio.pause();
+
+              return;
+            }
+
+            musicStartedRef.current =
+              true;
+
+            setMusicPlaying(true);
+          })
+          .catch(() => {
+            /*
+             * Autoplay can be blocked by browser.
+             *
+             * First user interaction handler
+             * below will try once.
+             */
+          });
+      };
+
+    /*
+     * Page-load autoplay attempt.
+     */
+    tryStartMusic();
+
+    /*
+     * ==========================================================
+     * FIRST USER INTERACTION FALLBACK
+     * ==========================================================
+     *
+     * This runs ONLY when music preference is ON.
+     *
+     * If user previously turned music OFF,
+     * this listener is never installed.
+     */
+    const handleFirstInteraction =
+      (): void => {
+        if (
+          firstInteractionHandledRef.current
+        ) {
+          return;
+        }
+
+        firstInteractionHandledRef.current =
+          true;
+
+        /*
+         * Preference is still ON here.
+         */
+        tryStartMusic();
+
+        /*
+         * Remove immediately so subsequent clicks
+         * never call play() again.
+         */
+        window.removeEventListener(
+          "pointerdown",
+          handleFirstInteraction,
+        );
+
+        window.removeEventListener(
+          "keydown",
+          handleFirstInteraction,
+        );
+
+        window.removeEventListener(
+          "touchstart",
+          handleFirstInteraction,
+        );
+      };
+
+    window.addEventListener(
+      "pointerdown",
+      handleFirstInteraction,
+      {
+        passive: true,
+      },
+    );
+
+    window.addEventListener(
+      "keydown",
+      handleFirstInteraction,
+    );
+
+    window.addEventListener(
+      "touchstart",
+      handleFirstInteraction,
+      {
+        passive: true,
+      },
+    );
+
+    return () => {
+      window.removeEventListener(
+        "pointerdown",
+        handleFirstInteraction,
+      );
+
+      window.removeEventListener(
+        "keydown",
+        handleFirstInteraction,
+      );
+
+      window.removeEventListener(
+        "touchstart",
+        handleFirstInteraction,
+      );
+
+      audio.removeEventListener(
+        "play",
+        handlePlay,
+      );
+
+      audio.removeEventListener(
+        "pause",
+        handlePause,
+      );
+
+      audio.removeEventListener(
+        "ended",
+        handleEnded,
+      );
+    };
+  }, [
+    musicEnabled,
+  ]);
+
+  /*
+  |--------------------------------------------------------------------------
+  | Music ON / OFF
+  |--------------------------------------------------------------------------
+  */
+
+  function handleMusicToggle(): void {
+    const audio =
+      musicRef.current;
+
+    if (!audio) {
+      return;
+    }
+
+    /*
+     * ==========================================================
+     * TURN MUSIC OFF
+     * ==========================================================
+     */
+
+    if (musicPlaying) {
+      /*
+       * Stop immediately.
+       */
+      audio.pause();
+
+      /*
+       * Reset to beginning so the next manual
+       * ON starts cleanly.
+       */
+      try {
+        audio.currentTime = 0;
+      } catch {
+        // Ignore currentTime errors.
+      }
+
+      musicStartedRef.current =
+        false;
+
+      setMusicPlaying(false);
+      setMusicEnabled(false);
+
+      /*
+       * Save explicit OFF preference.
+       */
+      try {
+        window.localStorage.setItem(
+          MUSIC_STORAGE_KEY,
+          "false",
+        );
+      } catch {
+        // Ignore localStorage errors.
+      }
+
+      return;
+    }
+
+    /*
+     * ==========================================================
+     * TURN MUSIC ON
+     * ==========================================================
+     */
+
+    setMusicEnabled(true);
+
+    try {
+      window.localStorage.setItem(
+        MUSIC_STORAGE_KEY,
+        "true",
+      );
+    } catch {
+      // Ignore localStorage errors.
+    }
+
+    audio.volume = Math.min(
+      1,
+      Math.max(
+        0,
+        ASTRO_MUSIC_VOLUME,
+      ),
+    );
+
+    /*
+     * Reset first-interaction state because the
+     * user has explicitly enabled music.
+     */
+    firstInteractionHandledRef.current =
+      true;
+
+    void audio
+      .play()
+      .then(() => {
+        musicStartedRef.current =
+          true;
+
+        setMusicPlaying(true);
+      })
+      .catch(() => {
+        /*
+         * Direct button click normally satisfies
+         * browser autoplay requirements.
+         */
+      });
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | Profile helpers
+  |--------------------------------------------------------------------------
+  */
 
   function handleProfileChange<
     K extends keyof typeof profile,
@@ -413,15 +905,22 @@ export default function Home() {
     key: K,
     value: (typeof profile)[K],
   ): void {
-    updateProfile(key, value);
-    setValidationMessage(null);
+    updateProfile(
+      key,
+      value,
+    );
+
+    setValidationMessage(
+      null,
+    );
   }
 
   function handleLocationChange(
     value: string,
   ): void {
     locationAbortRef.current?.abort();
-    locationAbortRef.current = null;
+    locationAbortRef.current =
+      null;
 
     setLocationText(value);
     setSuggestions([]);
@@ -443,7 +942,9 @@ export default function Home() {
     if (
       trimmed.length >= 2
     ) {
-      setLocationLoading(true);
+      setLocationLoading(
+        true,
+      );
 
       window.requestAnimationFrame(
         () => {
@@ -451,19 +952,32 @@ export default function Home() {
         },
       );
     } else {
-      setLocationLoading(false);
+      setLocationLoading(
+        false,
+      );
     }
   }
+
+  /*
+  |--------------------------------------------------------------------------
+  | Select location
+  |--------------------------------------------------------------------------
+  */
 
   async function selectLocation(
     suggestion: LocationSuggestion,
   ): Promise<void> {
     locationAbortRef.current?.abort();
-    locationAbortRef.current = null;
+    locationAbortRef.current =
+      null;
 
     setSuggestions([]);
-    setLocationPopupPosition(null);
-    setLocationLoading(true);
+    setLocationPopupPosition(
+      null,
+    );
+    setLocationLoading(
+      true,
+    );
 
     try {
       const response =
@@ -495,22 +1009,6 @@ export default function Home() {
       const data =
         (await response.json()) as TimezoneResponse;
 
-      /*
-      |--------------------------------------------------------------------------
-      | IMPORTANT
-      |--------------------------------------------------------------------------
-      |
-      | /api/location/timezone returns:
-      |
-      | {
-      |   timezoneId: "Europe/London"
-      | }
-      |
-      | Use timezoneId as the actual timezone value when
-      | data.timezone is not separately provided.
-      |
-      */
-
       const timezoneId =
         typeof data.timezoneId ===
           "string"
@@ -539,28 +1037,17 @@ export default function Home() {
         displayName:
           suggestion.displayName,
 
-        /*
-        |--------------------------------------------------------------------------
-        | Keep exact coordinates from the selected suggestion.
-        |--------------------------------------------------------------------------
-        */
-
         latitude:
           suggestion.latitude,
 
         longitude:
           suggestion.longitude,
 
-        /*
-        |--------------------------------------------------------------------------
-        | Backend accepts both numeric offsets and IANA timezone IDs.
-        |--------------------------------------------------------------------------
-        */
-
         timezone,
 
         timezoneId:
-          timezoneId || timezone,
+          timezoneId ||
+          timezone,
       };
 
       updateProfile(
@@ -570,11 +1057,17 @@ export default function Home() {
 
       setLocationText("");
       setSuggestions([]);
-      setLocationPopupPosition(null);
-      setValidationMessage(null);
+      setLocationPopupPosition(
+        null,
+      );
+      setValidationMessage(
+        null,
+      );
     } catch (error: unknown) {
       setSuggestions([]);
-      setLocationPopupPosition(null);
+      setLocationPopupPosition(
+        null,
+      );
 
       setLocationText(
         suggestion.displayName,
@@ -593,9 +1086,17 @@ export default function Home() {
         );
       }
     } finally {
-      setLocationLoading(false);
+      setLocationLoading(
+        false,
+      );
     }
   }
+
+  /*
+  |--------------------------------------------------------------------------
+  | Chat helpers
+  |--------------------------------------------------------------------------
+  */
 
   function canSend(): boolean {
     return (
@@ -605,34 +1106,6 @@ export default function Home() {
       ) === null &&
       !sending
     );
-  }
-
-  function playOmSound(): void {
-    if (
-      !ASTRO_MUSIC_ENABLED ||
-      typeof window ===
-      "undefined"
-    ) {
-      return;
-    }
-
-    try {
-      const audio =
-        new Audio(
-          "/audio/om.mp3",
-        );
-
-      audio.volume =
-        ASTRO_MUSIC_VOLUME;
-
-      audio.preload = "auto";
-
-      void audio.play().catch(() => {
-        // Browser autoplay restriction को ignore करें।
-      });
-    } catch {
-      // Audio unavailable होने पर app चलता रहेगा।
-    }
   }
 
   async function sendMessage(): Promise<void> {
@@ -655,6 +1128,7 @@ export default function Home() {
       setValidationMessage(
         validationKey,
       );
+
       return;
     }
 
@@ -674,10 +1148,10 @@ export default function Home() {
     );
 
     setInput("");
-    setValidationMessage(null);
+    setValidationMessage(
+      null,
+    );
     setSending(true);
-
-    playOmSound();
 
     try {
       const response =
@@ -722,7 +1196,8 @@ export default function Home() {
           ...current,
           {
             role: "assistant",
-            content: answer,
+            content:
+              answer,
           },
         ],
       );
@@ -760,19 +1235,6 @@ export default function Home() {
     }
   }
 
-  function handleLanguageChange(
-    event: ChangeEvent<HTMLSelectElement>,
-  ): void {
-    const value =
-      event.target.value;
-
-    if (
-      isAnswerLanguage(value)
-    ) {
-      setLanguage(value);
-    }
-  }
-
   const validationText =
     validationMessage === null
       ? null
@@ -782,6 +1244,12 @@ export default function Home() {
 
   const selectedLocation =
     profile.placeOfBirth;
+
+  /*
+  |--------------------------------------------------------------------------
+  | Location suggestions portal
+  |--------------------------------------------------------------------------
+  */
 
   const locationPopup =
     suggestions.length > 0 &&
@@ -852,6 +1320,10 @@ export default function Home() {
         </div>
 
         <div className="relative z-10">
+          {/* ---------------------------------------------------------------- */}
+          {/* Header */}
+          {/* ---------------------------------------------------------------- */}
+
           <header className="astro-header border-b border-[#e7e2d9]/80 bg-[#faf9f6]/90 backdrop-blur-md">
             <div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-4 sm:px-8">
               <div className="flex items-center gap-3">
@@ -870,20 +1342,155 @@ export default function Home() {
                 </div>
               </div>
 
-              <div className="hidden text-right sm:block">
-                <p className="text-xs font-medium text-[#5c6575]">
-                  {t.header.metaTitle}
-                </p>
+              <div className="flex items-center">
+                {/* ========================================================== */}
+                {/* Music Button */}
+                {/* ========================================================== */}
 
-                <p className="text-[10px] text-[#9aa1ad]">
-                  {
-                    t.header
-                      .metaDescription
-                  }
-                </p>
+                {ASTRO_MUSIC_ENABLED && (
+                  <button
+                    type="button"
+                    onClick={
+                      handleMusicToggle
+                    }
+                    className={`mr-3 flex h-9 w-9 shrink-0 items-center justify-center rounded-full border transition-all ${musicPlaying
+                        ? "border-[#6b4f8a]/30 bg-[#6b4f8a]/10 text-[#6b4f8a]"
+                        : "border-[#ddd7cd] bg-white text-[#8a93a3] hover:border-[#6b4f8a]/30 hover:text-[#6b4f8a]"
+                      }`}
+                    aria-label={
+                      musicPlaying
+                        ? language ===
+                          "hi"
+                          ? "संगीत बंद करें"
+                          : "Turn music off"
+                        : language ===
+                          "hi"
+                          ? "संगीत चालू करें"
+                          : "Turn music on"
+                    }
+                    title={
+                      musicPlaying
+                        ? language ===
+                          "hi"
+                          ? "संगीत बंद करें"
+                          : "Turn music off"
+                        : language ===
+                          "hi"
+                          ? "संगीत चालू करें"
+                          : "Turn music on"
+                    }
+                    aria-pressed={
+                      musicPlaying
+                    }
+                  >
+                    {musicPlaying ? (
+                      <svg
+                        width="17"
+                        height="17"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        aria-hidden="true"
+                      >
+                        <path
+                          d="M9 18V5L21 3V16"
+                          stroke="currentColor"
+                          strokeWidth="1.7"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+
+                        <circle
+                          cx="6"
+                          cy="18"
+                          r="3"
+                          stroke="currentColor"
+                          strokeWidth="1.7"
+                        />
+
+                        <circle
+                          cx="18"
+                          cy="16"
+                          r="3"
+                          stroke="currentColor"
+                          strokeWidth="1.7"
+                        />
+                      </svg>
+                    ) : (
+                      <span className="relative flex h-5 w-5 items-center justify-center">
+                        <svg
+                          width="17"
+                          height="17"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          aria-hidden="true"
+                        >
+                          <path
+                            d="M9 18V5L21 3V16"
+                            stroke="currentColor"
+                            strokeWidth="1.7"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+
+                          <circle
+                            cx="6"
+                            cy="18"
+                            r="3"
+                            stroke="currentColor"
+                            strokeWidth="1.7"
+                          />
+
+                          <circle
+                            cx="18"
+                            cy="16"
+                            r="3"
+                            stroke="currentColor"
+                            strokeWidth="1.7"
+                          />
+                        </svg>
+
+                        <span
+                          className="absolute left-1/2 top-1/2 h-[2px] w-6 -translate-x-1/2 -translate-y-1/2 rotate-45 rounded-full bg-current"
+                          aria-hidden="true"
+                        />
+                      </span>
+                    )}
+                  </button>
+                )}
+
+                <div className="hidden text-right sm:block">
+                  <p className="text-xs font-medium text-[#5c6575]">
+                    {t.header.metaTitle}
+                  </p>
+
+                  <p className="text-[10px] text-[#9aa1ad]">
+                    {
+                      t.header
+                        .metaDescription
+                    }
+                  </p>
+                </div>
               </div>
             </div>
           </header>
+
+          {/* ---------------------------------------------------------------- */}
+          {/* Actual Audio */}
+          {/* ---------------------------------------------------------------- */}
+
+          {ASTRO_MUSIC_ENABLED && (
+            <audio
+              ref={musicRef}
+              src="/audio/om.mp3"
+              loop
+              preload="auto"
+              aria-hidden="true"
+            />
+          )}
+
+          {/* ---------------------------------------------------------------- */}
+          {/* Hero */}
+          {/* ---------------------------------------------------------------- */}
 
           <section className="mx-auto max-w-7xl px-5 pb-8 pt-10 sm:px-8 sm:pt-14">
             <div className="mx-auto max-w-3xl text-center">
@@ -942,7 +1549,15 @@ export default function Home() {
             </div>
           </section>
 
+          {/* ---------------------------------------------------------------- */}
+          {/* Main */}
+          {/* ---------------------------------------------------------------- */}
+
           <section className="mx-auto grid max-w-7xl gap-6 px-5 pb-12 sm:px-8 lg:grid-cols-[380px_minmax(0,1fr)]">
+            {/* ================================================================ */}
+            {/* Profile */}
+            {/* ================================================================ */}
+
             <aside className="astro-card rounded-2xl border border-[#e3ded5]/90 bg-[#faf9f6]/95 p-6 shadow-[0_8px_30px_rgba(67,53,34,0.07)] backdrop-blur-sm">
               <div className="flex items-start justify-between gap-4">
                 <div>
@@ -976,6 +1591,8 @@ export default function Home() {
 
               {showProfile && (
                 <div className="astro-profile-form mt-6 space-y-5">
+                  {/* Name */}
+
                   <div className="astro-field">
                     <label
                       htmlFor="name"
@@ -1004,6 +1621,8 @@ export default function Home() {
                       className="astro-input w-full rounded-xl border border-[#d8d2c7] bg-white px-4 py-3 text-sm outline-none"
                     />
                   </div>
+
+                  {/* Gender */}
 
                   <div className="astro-field">
                     <label
@@ -1048,6 +1667,126 @@ export default function Home() {
                     </select>
                   </div>
 
+                  {/* ========================================================== */}
+                  {/* Result Language */}
+                  {/* ========================================================== */}
+
+                  <div className="astro-field">
+                    <div className="mb-2 flex items-center justify-between gap-3">
+                      <label
+                        htmlFor="answerLanguage"
+                        className="block text-xs font-medium text-[#4f596a]"
+                      >
+                        {language ===
+                          "hi"
+                          ? "परिणाम की भाषा"
+                          : "Result Language"}
+                      </label>
+
+                      <span className="text-[10px] text-[#9aa1ad]">
+                        {language ===
+                          "hi"
+                          ? "भाषा चुनें"
+                          : "Choose language"}
+                      </span>
+                    </div>
+
+                    <div
+                      id="answerLanguage"
+                      role="group"
+                      aria-label={
+                        language ===
+                          "hi"
+                          ? "परिणाम की भाषा"
+                          : "Result Language"
+                      }
+                      className="grid grid-cols-2 gap-1 rounded-xl border border-[#d8d2c7] bg-[#f5f2ed] p-1"
+                    >
+                      <button
+                        type="button"
+                        disabled={sending}
+                        onClick={() => {
+                          if (
+                            isAnswerLanguage(
+                              "hi",
+                            )
+                          ) {
+                            setLanguage(
+                              "hi",
+                            );
+
+                            setValidationMessage(
+                              null,
+                            );
+                          }
+                        }}
+                        aria-pressed={
+                          language ===
+                          "hi"
+                        }
+                        className={`rounded-lg px-3 py-3 text-sm font-medium transition-all ${language ===
+                            "hi"
+                            ? "bg-white text-[#6b4f8a] shadow-sm ring-1 ring-[#6b4f8a]/10"
+                            : "text-[#737d8d] hover:bg-white/70 hover:text-[#4f596a]"
+                          } disabled:cursor-not-allowed disabled:opacity-50`}
+                      >
+                        <span className="block">
+                          हिंदी
+                        </span>
+
+                        <span className="mt-0.5 block text-[10px] font-normal opacity-70">
+                          Hindi
+                        </span>
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled={sending}
+                        onClick={() => {
+                          if (
+                            isAnswerLanguage(
+                              "en",
+                            )
+                          ) {
+                            setLanguage(
+                              "en",
+                            );
+
+                            setValidationMessage(
+                              null,
+                            );
+                          }
+                        }}
+                        aria-pressed={
+                          language ===
+                          "en"
+                        }
+                        className={`rounded-lg px-3 py-3 text-sm font-medium transition-all ${language ===
+                            "en"
+                            ? "bg-white text-[#6b4f8a] shadow-sm ring-1 ring-[#6b4f8a]/10"
+                            : "text-[#737d8d] hover:bg-white/70 hover:text-[#4f596a]"
+                          } disabled:cursor-not-allowed disabled:opacity-50`}
+                      >
+                        <span className="block">
+                          English
+                        </span>
+
+                        <span className="mt-0.5 block text-[10px] font-normal opacity-70">
+                          English
+                        </span>
+                      </button>
+                    </div>
+
+                    <p className="mt-2 text-[10px] leading-4 text-[#98a0ad]">
+                      {language ===
+                        "hi"
+                        ? "आप ज्योतिषीय परिणाम हिंदी या अंग्रेज़ी में प्राप्त कर सकते हैं।"
+                        : "Choose whether your astrology results should be in English or Hindi."}
+                    </p>
+                  </div>
+
+                  {/* Date of birth */}
+
                   <div className="astro-field">
                     <label
                       htmlFor="dateOfBirth"
@@ -1075,6 +1814,8 @@ export default function Home() {
                       className="astro-input w-full rounded-xl border border-[#d8d2c7] bg-white px-4 py-3 text-sm outline-none"
                     />
                   </div>
+
+                  {/* Time of birth */}
 
                   <div className="astro-field">
                     <label className="mb-2 block text-xs font-medium text-[#4f596a]">
@@ -1251,6 +1992,8 @@ export default function Home() {
                     </p>
                   </div>
 
+                  {/* Place of birth */}
+
                   <div className="astro-field">
                     <label
                       htmlFor="placeOfBirth"
@@ -1329,6 +2072,8 @@ export default function Home() {
                     </p>
                   </div>
 
+                  {/* Selected location */}
+
                   {selectedLocation && (
                     <div className="astro-location-card rounded-xl border border-[#e4ded4] bg-[#f8f6f1] p-4">
                       <div className="flex items-start gap-3">
@@ -1401,9 +2146,98 @@ export default function Home() {
                       </div>
                     </div>
                   )}
+
+                  {/* ========================================================== */}
+                  {/* Privacy & Security */}
+                  {/* ========================================================== */}
+
+                  <div className="mt-5 rounded-xl border border-[#e3ded5] bg-[#f8f6f1] p-4">
+                    <div className="flex items-start gap-3">
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600">
+                        <svg
+                          width="18"
+                          height="18"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          aria-hidden="true"
+                        >
+                          <path
+                            d="M12 3L19 6V11C19 15.5 16.1 19.5 12 21C7.9 19.5 5 15.5 5 11V6L12 3Z"
+                            stroke="currentColor"
+                            strokeWidth="1.7"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+
+                          <path
+                            d="M9 12L11 14L15 10"
+                            stroke="currentColor"
+                            strokeWidth="1.7"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      </div>
+
+                      <div className="min-w-0">
+                        <p className="text-xs font-semibold text-[#4f596a]">
+                          Your Privacy Matters
+                        </p>
+
+                        <p className="mt-1 text-[11px] leading-5 text-[#7c8594]">
+                          We don’t store your
+                          personal information
+                          unnecessarily. Your
+                          information is protected
+                          with encryption while it
+                          is being transmitted.
+                        </p>
+
+                        <div className="mt-3 space-y-1.5">
+                          <div className="flex items-center gap-2 text-[10px] text-[#737d8d]">
+                            <span className="text-emerald-600">
+                              ✓
+                            </span>
+
+                            <span>
+                              No unnecessary
+                              personal data
+                              storage
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-2 text-[10px] text-[#737d8d]">
+                            <span className="text-emerald-600">
+                              ✓
+                            </span>
+
+                            <span>
+                              Encrypted data
+                              transmission
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-2 text-[10px] text-[#737d8d]">
+                            <span className="text-emerald-600">
+                              ✓
+                            </span>
+
+                            <span>
+                              Your privacy is
+                              our priority
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               )}
             </aside>
+
+            {/* ================================================================ */}
+            {/* Chat */}
+            {/* ================================================================ */}
 
             <section className="astro-chat flex min-h-[680px] flex-col overflow-hidden rounded-2xl border border-[#e3ded5]/90 bg-white/95 shadow-[0_8px_30px_rgba(67,53,34,0.07)] backdrop-blur-sm">
               <div className="border-b border-[#e8e3da] bg-[#faf9f6]/95 px-5 py-4 sm:px-6">
@@ -1449,7 +2283,9 @@ export default function Home() {
 
                         <div className="mt-5 flex flex-wrap justify-center gap-2">
                           {t.chat.quickQuestions.map(
-                            (question) => (
+                            (
+                              question,
+                            ) => (
                               <button
                                 key={
                                   question
@@ -1459,13 +2295,16 @@ export default function Home() {
                                   setInput(
                                     question,
                                   );
+
                                   setValidationMessage(
                                     null,
                                   );
                                 }}
                                 className="astro-chip rounded-full border border-[#ddd7cd] bg-[#faf9f6] px-3 py-2 text-xs text-[#697282]"
                               >
-                                {question}
+                                {
+                                  question
+                                }
                               </button>
                             ),
                           )}
@@ -1488,7 +2327,8 @@ export default function Home() {
                         }`}
                       style={{
                         animationDelay: `${Math.min(
-                          index * 70,
+                          index *
+                          70,
                           500,
                         )}ms`,
                       }}
@@ -1543,46 +2383,11 @@ export default function Home() {
                 )}
               </div>
 
+              {/* ============================================================ */}
+              {/* Chat input */}
+              {/* ============================================================ */}
+
               <div className="border-t border-[#e8e3da] bg-[#faf9f6]/95 p-4 sm:p-5">
-                <div className="mb-3 flex items-center justify-between gap-3">
-                  <div>
-                    <p className="text-xs font-medium text-[#4f596a]">
-                      {
-                        t.chat
-                          .answerLanguage
-                      }
-                    </p>
-
-                    <p className="mt-0.5 text-[10px] text-[#98a0ad]">
-                      {
-                        t.chat
-                          .answerLanguageHelper
-                      }
-                    </p>
-                  </div>
-
-                  <select
-                    value={language}
-                    onChange={
-                      handleLanguageChange
-                    }
-                    disabled={sending}
-                    aria-label={
-                      t.chat
-                        .answerLanguage
-                    }
-                    className="astro-input rounded-xl border border-[#d8d2c7] bg-white px-3 py-2 text-xs font-medium text-[#344054] outline-none disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <option value="en">
-                      {t.chat.english}
-                    </option>
-
-                    <option value="hi">
-                      {t.chat.hindi}
-                    </option>
-                  </select>
-                </div>
-
                 <div className="flex items-end gap-3">
                   <textarea
                     value={input}
@@ -1591,6 +2396,7 @@ export default function Home() {
                         event.target
                           .value,
                       );
+
                       setValidationMessage(
                         null,
                       );
@@ -1676,38 +2482,41 @@ export default function Home() {
             </section>
           </section>
 
+          {/* ---------------------------------------------------------------- */}
+          {/* Footer */}
+          {/* ---------------------------------------------------------------- */}
+
           <footer className="border-t border-[#ddd7cd] bg-[#f7f4ee]">
-  <div className="mx-auto max-w-7xl px-5 py-6 sm:px-8">
-    <div className="grid gap-5 lg:grid-cols-[1fr_auto] lg:items-center">
-      {/* Left */}
-      <div className="text-center lg:text-left">
-        <p className="text-xs font-medium leading-5 text-[#596273]">
-          {t.footer.description}
-        </p>
+            <div className="mx-auto max-w-7xl px-5 py-6 sm:px-8">
+              <div className="grid gap-5 lg:grid-cols-[1fr_auto] lg:items-center">
+                <div className="text-center lg:text-left">
+                  <p className="text-xs font-medium leading-5 text-[#596273]">
+                    {t.footer.description}
+                  </p>
 
-        <p className="mt-2 max-w-3xl text-[11px] leading-5 text-[#737d8d]">
-          <span className="font-semibold text-[#565f70]">
-            {language === "hi"
-              ? "अस्वीकरण:"
-              : "Disclaimer:"}
-          </span>{" "}
-          {t.footer.disclaimer}
-        </p>
-      </div>
+                  <p className="mt-2 max-w-3xl text-[11px] leading-5 text-[#737d8d]">
+                    <span className="font-semibold text-[#565f70]">
+                      {language ===
+                        "hi"
+                        ? "अस्वीकरण:"
+                        : "Disclaimer:"}
+                    </span>{" "}
+                    {t.footer.disclaimer}
+                  </p>
+                </div>
 
-      {/* Right */}
-      <div className="flex flex-col items-center justify-center border-t border-[#ddd7cd] pt-4 lg:min-w-[220px] lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0">
-        <p className="astro-footer-om text-sm font-medium text-[#6b4f8a]">
-          {t.footer.right}
-        </p>
+                <div className="flex flex-col items-center justify-center border-t border-[#ddd7cd] pt-4 lg:min-w-[220px] lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0">
+                  <p className="astro-footer-om text-sm font-medium text-[#6b4f8a]">
+                    {t.footer.right}
+                  </p>
 
-        <p className="mt-2 text-sm font-bold tracking-wide text-[#4f596a]">
-          {t.footer.poweredBy}
-        </p>
-      </div>
-    </div>
-  </div>
-</footer>
+                  <p className="mt-2 text-sm font-bold tracking-wide text-[#4f596a]">
+                    {t.footer.poweredBy}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </footer>
         </div>
       </main>
 
