@@ -19,6 +19,8 @@
       }
     ],
     "paths": {
+      "@/hooks/*": ["./app/hooks/*"],
+  "@/components/*": ["./app/components/*"],
       "@/*": ["./*"]
     }
   },

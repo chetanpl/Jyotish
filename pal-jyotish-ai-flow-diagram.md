@@ -1,4 +1,4 @@
-# Pal Jyotish AI — Development & Usage Flow Diagram
+# Daivik AI — Development & Usage Flow Diagram
 
 > Email sending flow is intentionally excluded.
 
@@ -7,7 +7,7 @@
 ```text
 ┌──────────────────────────────┐
 │        USER OPENS APP        │
-│       Pal Jyotish AI         │
+│       Daivik AI         │
 └──────────────┬───────────────┘
                │
                ▼
@@ -387,7 +387,7 @@ Local Development
        └── Production Deployment
        │
        ▼
-  Pal Jyotish AI
+  Daivik AI
        │
        ▼
      User
@@ -414,6 +414,6 @@ Local Development
                               │
                               ▼
                  ┌─────────────────────────┐
-                 │   PAL JYOTISH AI CHAT   │
+                 │   Daivik AI CHAT   │
                  └─────────────────────────┘
 ```

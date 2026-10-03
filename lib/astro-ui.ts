@@ -35,8 +35,10 @@ export type LocationSuggestion = {
 
 export type ChatResponse = {
   message?: string;
+  conversationTopic?: string;
   error?: string;
 };
+
 
 export type LocationSearchResponse = {
   suggestions?: LocationSuggestion[];

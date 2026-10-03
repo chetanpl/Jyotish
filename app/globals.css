@@ -321,3 +321,337 @@ select {
     animation: none;
   }
 }
+
+
+/* =========================================================
+   AstroAI Feedback
+   ========================================================= */
+
+.astro-feedback {
+  margin-top: 14px;
+  width: 100%;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.78);
+  padding: 18px;
+  box-shadow: 0 8px 30px rgba(15, 23, 42, 0.06);
+  backdrop-filter: blur(12px);
+}
+
+.astro-feedback-header {
+  margin-bottom: 14px;
+}
+
+.astro-feedback-title {
+  margin: 0;
+  color: #273142;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.astro-feedback-subtitle {
+  margin: 4px 0 0;
+  color: #718096;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.astro-feedback-reaction-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+
+.astro-feedback-reaction {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 38px;
+  border: 1px solid #e2e8f0;
+  border-radius: 999px;
+  background: #ffffff;
+  padding: 0 14px;
+  color: #475569;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  transition:
+    border-color 0.2s ease,
+    background 0.2s ease,
+    transform 0.2s ease;
+}
+
+.astro-feedback-reaction:hover {
+  border-color: #cbd5e1;
+  transform: translateY(-1px);
+}
+
+.astro-feedback-reaction-active {
+  border-color: #c4b5fd;
+  background: #f5f3ff;
+  color: #5b21b6;
+}
+
+.astro-feedback-reaction-icon {
+  font-size: 16px;
+}
+
+.astro-feedback-section {
+  margin-top: 16px;
+}
+
+.astro-feedback-label {
+  display: block;
+  margin-bottom: 9px;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.astro-feedback-stars {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.astro-feedback-star {
+  border: 0;
+  background: transparent;
+  padding: 2px;
+  color: #cbd5e1;
+  cursor: pointer;
+  font-size: 25px;
+  line-height: 1;
+  transition:
+    color 0.15s ease,
+    transform 0.15s ease;
+}
+
+.astro-feedback-star:hover {
+  color: #f59e0b;
+  transform: scale(1.08);
+}
+
+.astro-feedback-star-active {
+  color: #f59e0b;
+}
+
+.astro-feedback-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.astro-feedback-chip {
+  border: 1px solid #e2e8f0;
+  border-radius: 999px;
+  background: #ffffff;
+  padding: 7px 11px;
+  color: #64748b;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  transition:
+    border-color 0.2s ease,
+    background 0.2s ease,
+    color 0.2s ease;
+}
+
+.astro-feedback-chip:hover {
+  border-color: #cbd5e1;
+  color: #334155;
+}
+
+.astro-feedback-chip-active {
+  border-color: #c4b5fd;
+  background: #f5f3ff;
+  color: #5b21b6;
+}
+
+.astro-feedback-textarea {
+  display: block;
+  width: 100%;
+  min-height: 82px;
+  resize: vertical;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  outline: none;
+  background: #ffffff;
+  padding: 11px 12px;
+  color: #334155;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
+  box-sizing: border-box;
+}
+
+.astro-feedback-textarea::placeholder {
+  color: #94a3b8;
+}
+
+.astro-feedback-textarea:focus {
+  border-color: #a78bfa;
+  box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.1);
+}
+
+.astro-feedback-character-count {
+  margin-top: 4px;
+  text-align: right;
+  color: #94a3b8;
+  font-size: 10px;
+}
+
+.astro-feedback-error {
+  margin-top: 12px;
+  border-radius: 10px;
+  background: #fff1f2;
+  padding: 9px 11px;
+  color: #be123c;
+  font-size: 12px;
+}
+
+.astro-feedback-footer {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+
+.astro-feedback-submit {
+  min-height: 38px;
+  border: 0;
+  border-radius: 10px;
+  background: #273142;
+  padding: 0 17px;
+  color: #ffffff;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease;
+}
+
+.astro-feedback-submit:hover:not(:disabled) {
+  transform: translateY(-1px);
+  opacity: 0.92;
+}
+
+.astro-feedback-submit:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.astro-feedback-success {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+}
+
+.astro-feedback-success-icon {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: #ecfdf5;
+  color: #059669;
+  font-size: 17px;
+  font-weight: 800;
+}
+
+.astro-feedback-success-title {
+  color: #273142;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.astro-feedback-success-text {
+  margin-top: 2px;
+  color: #718096;
+  font-size: 11px;
+}
+
+@media (max-width: 640px) {
+  .astro-feedback {
+    border-radius: 15px;
+    padding: 14px;
+  }
+
+  .astro-feedback-reaction {
+    flex: 1;
+    justify-content: center;
+  }
+
+  .astro-feedback-footer {
+    justify-content: stretch;
+  }
+
+  .astro-feedback-submit {
+    width: 100%;
+  }
+}
+@keyframes astroFeedbackControlJiggle {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) rotate(0deg);
+  }
+
+  10% {
+    transform: translate3d(-1.5px, 0, 0) rotate(-0.6deg);
+  }
+
+  20% {
+    transform: translate3d(1.5px, 0, 0) rotate(0.6deg);
+  }
+
+  30% {
+    transform: translate3d(-1.5px, 0, 0) rotate(-0.5deg);
+  }
+
+  40% {
+    transform: translate3d(1.5px, 0, 0) rotate(0.5deg);
+  }
+
+  50% {
+    transform: translate3d(-1px, 0, 0) rotate(-0.35deg);
+  }
+
+  60% {
+    transform: translate3d(1px, 0, 0) rotate(0.35deg);
+  }
+
+  70%,
+  100% {
+    transform: translate3d(0, 0, 0) rotate(0deg);
+  }
+}
+
+
+/* Whole feedback form */
+.astro-feedback-buzz {
+  width: 100%;
+}
+
+
+/* Individual controls / control groups */
+.astro-feedback-buzz .astro-feedback-reaction-row,
+.astro-feedback-buzz .astro-feedback-stars,
+.astro-feedback-buzz .astro-feedback-chips,
+.astro-feedback-buzz .astro-feedback-textarea,
+.astro-feedback-buzz .astro-feedback-submit {
+  transform-origin: center center;
+  will-change: transform;
+
+  animation:
+    astroFeedbackControlJiggle
+    5s
+    ease-in-out
+    infinite;
+}

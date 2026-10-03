@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import SwissEph from "swisseph-wasm";
+
+import { ASTROLOGY_SYSTEM_RULES } from "../../../lib/astrology-rules";
+import { callGroq } from "../../../lib/groq";
 import { sendAstroEmail } from "../../../lib/sendAstroEmail";
+import {
+  getConversationMemory,
+  setConversationMemory,
+} from "../../../lib/conversation-cache";
 
 export const runtime = "nodejs";
 
@@ -37,6 +44,11 @@ type ChatMessage = {
   content: string;
 };
 
+type ConversationMemory = {
+  summary: string;
+  summaryMessageCount: number;
+};
+
 type ZodiacPosition = {
   sign: string;
   signIndex: number;
@@ -63,7 +75,8 @@ type PlanetData = {
   speed?: number;
   zodiac: ZodiacPosition;
   nakshatra: Nakshatra;
-  house?: number | null;
+  house: number | null;
+  retrograde?: boolean;
 };
 
 type HouseData = {
@@ -88,10 +101,10 @@ type DashaData = {
   moonNakshatra: Nakshatra;
 
   mahadasha:
-  | (DashaPeriod & {
-    remainingYears: number;
-  })
-  | null;
+    | (DashaPeriod & {
+        remainingYears: number;
+      })
+    | null;
 
   antardasha: DashaPeriod | null;
 
@@ -143,221 +156,53 @@ type GeminiCandidate = {
 
 type GeminiResponse = {
   candidates?: GeminiCandidate[];
+  modelUsed?: string;
 };
 
-type GeminiContent = {
-  role: "user" | "model";
-  parts: GeminiPart[];
+type AstroAnswerPayload = {
+  answer: string;
+  conversationTopic: string;
 };
 
-type GeminiRequestOptions = {
-  maxOutputTokens: number;
-  thinkingLevel: ThinkingLevel;
+type GeminiErrorInfo = {
+  status: number;
+  message: string;
 };
 
 /*
 |--------------------------------------------------------------------------
-| ENVIRONMENT CONFIGURATION
-|--------------------------------------------------------------------------
-|
-| These values can be changed from .env without changing this file.
-|
+| CONFIG
 |--------------------------------------------------------------------------
 */
 
-function getPositiveIntEnv(
-  name: string,
-  fallback: number,
-  min: number,
-  max: number,
-): number {
-  const raw = process.env[name]?.trim();
+const MODEL = process.env.GEMINI_MODEL?.trim() || "gemini-3.8-flash";
 
-  if (!raw) {
-    return fallback;
-  }
+const GEMINI_FALLBACK_MODELS = [
+  process.env.GEMINI_FALLBACK_MODEL_1?.trim() || "gemini-3.7-flash",
 
-  const value = Number(raw);
+  process.env.GEMINI_FALLBACK_MODEL_2?.trim() || "gemini-3.6-flash",
+].filter(Boolean);
 
-  if (
-    !Number.isInteger(value) ||
-    value < min ||
-    value > max
-  ) {
-    console.warn(
-      `${name} is invalid. Using default value ${fallback}.`,
-    );
+const GEMINI_MODEL_CHAIN = [
+  MODEL,
+  ...GEMINI_FALLBACK_MODELS.filter((model) => model !== MODEL),
+];
 
-    return fallback;
-  }
+const MAX_OUTPUT_TOKENS = 6144;
 
-  return value;
-}
+const MAX_SUMMARY_CHARS = 5000;
 
-function getThinkingLevel(): ThinkingLevel {
-  const value =
-    process.env.GEMINI_THINKING_LEVEL
-      ?.trim()
-      .toLowerCase();
+const MAX_CONVERSATION_TOPIC_CHARS = 1800;
 
-  if (
-    value === "low" ||
-    value === "medium" ||
-    value === "high"
-  ) {
-    return value;
-  }
+const MAX_GEMINI_RETRIES = 1;
 
-  return "medium";
-}
+const GEMINI_RETRY_DELAY_MS = 1000;
 
-/*
-|--------------------------------------------------------------------------
-| GEMINI CONFIG
-|--------------------------------------------------------------------------
-*/
+const GEMINI_TIMEOUT_MS = 45_000;
 
-const MODEL =
-  process.env.GEMINI_MODEL?.trim() ||
-  "gemini-3.8-flash";
+const MAX_MESSAGES = 100;
 
-/*
- * Keep the model on Gemini 3.8 Flash.
- *
- * Do not configure a model fallback here.
- */
-if (MODEL !== "gemini-3.8-flash") {
-  console.warn(
-    `GEMINI_MODEL is set to "${MODEL}". The application was designed for gemini-3.8-flash.`,
-  );
-}
-
-/*
- * How many recent messages are sent to Gemini as normal conversation turns.
- */
-const MAX_RECENT_MESSAGES =
-  getPositiveIntEnv(
-    "MAX_RECENT_MESSAGES",
-    8,
-    2,
-    30,
-  );
-
-/*
- * Maximum size of the stored conversation summary.
- *
- * This is CHARACTER count, not token count.
- */
-const MAX_SUMMARY_CHARS =
-  getPositiveIntEnv(
-    "MAX_SUMMARY_CHARS",
-    4000,
-    500,
-    20000,
-  );
-
-/*
- * Number of newly aged-out messages before an existing summary
- * is regenerated.
- *
- * Example:
- *
- * summary covers 16 messages
- * another 8 messages become old
- * => summary can be updated
- */
-const SUMMARY_UPDATE_INTERVAL_MESSAGES =
-  getPositiveIntEnv(
-    "SUMMARY_UPDATE_INTERVAL_MESSAGES",
-    8,
-    1,
-    50,
-  );
-
-/*
- * Output limit for the normal astrology answer.
- *
- * Gemini 3.8's maxOutputTokens is a hard ceiling that includes
- * thinking tokens, so don't make this unnecessarily small.
- */
-const MAX_OUTPUT_TOKENS =
-  getPositiveIntEnv(
-    "MAX_OUTPUT_TOKENS",
-    4096,
-    512,
-    16384,
-  );
-
-/*
- * Smaller limit for the compact conversation summary.
- */
-const SUMMARY_MAX_OUTPUT_TOKENS =
-  getPositiveIntEnv(
-    "SUMMARY_MAX_OUTPUT_TOKENS",
-    768,
-    256,
-    4096,
-  );
-
-/*
- * Retry transient failures once per key.
- *
- * 429 is NOT retried on the same key.
- * It immediately moves to the next configured key.
- */
-const MAX_GEMINI_RETRIES =
-  getPositiveIntEnv(
-    "MAX_GEMINI_RETRIES",
-    1,
-    0,
-    5,
-  );
-
-const INITIAL_RETRY_DELAY =
-  getPositiveIntEnv(
-    "INITIAL_RETRY_DELAY_MS",
-    1000,
-    100,
-    10000,
-  );
-
-const GEMINI_REQUEST_TIMEOUT_MS =
-  getPositiveIntEnv(
-    "GEMINI_TIMEOUT_MS",
-    45_000,
-    5_000,
-    120_000,
-  );
-
-const EMAIL_TIMEOUT_MS =
-  getPositiveIntEnv(
-    "EMAIL_TIMEOUT_MS",
-    15_000,
-    5_000,
-    60_000,
-  );
-
-/*
- * Maximum number of messages accepted from the client.
- *
- * This is NOT the number sent to Gemini.
- * Old messages are compressed into the summary.
- */
-const MAX_MESSAGES =
-  getPositiveIntEnv(
-    "MAX_MESSAGES",
-    100,
-    10,
-    500,
-  );
-
-const MAX_MESSAGE_LENGTH =
-  getPositiveIntEnv(
-    "MAX_MESSAGE_LENGTH",
-    6000,
-    500,
-    20000,
-  );
+const MAX_MESSAGE_LENGTH = 6000;
 
 const ZODIAC_SIGNS = [
   "Aries",
@@ -426,211 +271,7 @@ const DASHA_SEQUENCE = [
   "Jupiter",
   "Saturn",
   "Mercury",
-] as const;
-
-/*
-|--------------------------------------------------------------------------
-| VALIDATION HELPERS
-|--------------------------------------------------------------------------
-*/
-
-function isRecord(
-  value: unknown,
-): value is Record<string, unknown> {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    !Array.isArray(value)
-  );
-}
-
-function getString(
-  value: unknown,
-): string | undefined {
-  return typeof value === "string"
-    ? value
-    : undefined;
-}
-
-function isResponseLanguage(
-  value: unknown,
-): value is ResponseLanguage {
-  return (
-    value === "en" ||
-    value === "hi"
-  );
-}
-
-function isChatMessage(
-  value: unknown,
-): value is ChatMessage {
-  if (!isRecord(value)) {
-    return false;
-  }
-
-  return (
-    (value.role === "user" ||
-      value.role === "assistant") &&
-    typeof value.content === "string"
-  );
-}
-
-function parseChatMessages(
-  value: unknown,
-): ChatMessage[] | null {
-  if (!Array.isArray(value)) {
-    return null;
-  }
-
-  if (!value.every(isChatMessage)) {
-    return null;
-  }
-
-  return value;
-}
-
-function isBirthLocation(
-  value: unknown,
-): value is BirthLocation {
-  if (!isRecord(value)) {
-    return false;
-  }
-
-  const latitude =
-    value.latitude;
-
-  const longitude =
-    value.longitude;
-
-  const validTimezone =
-    (typeof value.timezone === "number" &&
-      Number.isFinite(value.timezone)) ||
-    (typeof value.timezone === "string" &&
-      value.timezone.trim().length > 0);
-
-  return (
-    typeof value.name === "string" &&
-    value.name.trim().length > 0 &&
-    typeof value.displayName === "string" &&
-    value.displayName.trim().length > 0 &&
-    typeof latitude === "number" &&
-    Number.isFinite(latitude) &&
-    latitude >= -90 &&
-    latitude <= 90 &&
-    typeof longitude === "number" &&
-    Number.isFinite(longitude) &&
-    longitude >= -180 &&
-    longitude <= 180 &&
-    validTimezone &&
-    (value.placeId === undefined ||
-      typeof value.placeId === "string") &&
-    (value.timezoneId === undefined ||
-      value.timezoneId === null ||
-      typeof value.timezoneId === "string")
-  );
-}
-
-function isBirthProfile(
-  value: unknown,
-): value is BirthProfile {
-  if (!isRecord(value)) {
-    return false;
-  }
-
-  return (
-    typeof value.name === "string" &&
-    typeof value.dateOfBirth === "string" &&
-    typeof value.timeOfBirth === "string" &&
-    (value.gender === undefined ||
-      typeof value.gender === "string") &&
-    (value.placeOfBirth === null ||
-      isBirthLocation(
-        value.placeOfBirth,
-      ))
-  );
-}
-
-function parseOptionalString(
-  value: unknown,
-): string | null {
-  if (
-    typeof value !== "string"
-  ) {
-    return null;
-  }
-
-  const trimmed =
-    value.trim();
-
-  return trimmed.length > 0
-    ? trimmed
-    : null;
-}
-
-function parseOptionalNonNegativeInt(
-  value: unknown,
-): number | null {
-  if (
-    typeof value !== "number" ||
-    !Number.isInteger(value) ||
-    value < 0
-  ) {
-    return null;
-  }
-
-  return value;
-}
-
-/*
-|--------------------------------------------------------------------------
-| GEMINI API KEYS
-|--------------------------------------------------------------------------
-*/
-
-function getGeminiApiKeys(): string[] {
-  return Object.keys(process.env)
-    .filter((key) => {
-      return (
-        key === "GEMINI_API_KEY" ||
-        /^GEMINI_API_KEY\d+$/.test(key)
-      );
-    })
-    .sort((a, b) => {
-      if (a === "GEMINI_API_KEY") {
-        return -1;
-      }
-
-      if (b === "GEMINI_API_KEY") {
-        return 1;
-      }
-
-      const aNumber =
-        Number(
-          a.replace(
-            "GEMINI_API_KEY",
-            "",
-          ),
-        );
-
-      const bNumber =
-        Number(
-          b.replace(
-            "GEMINI_API_KEY",
-            "",
-          ),
-        );
-
-      return aNumber - bNumber;
-    })
-    .map(
-      (key) =>
-        process.env[key]?.trim() ?? "",
-    )
-    .filter(
-      (value): value is string =>
-        value.length > 0,
-    );
-}
+];
 
 /*
 |--------------------------------------------------------------------------
@@ -638,22 +279,74 @@ function getGeminiApiKeys(): string[] {
 |--------------------------------------------------------------------------
 */
 
-function sleep(
-  ms: number,
-): Promise<void> {
-  return new Promise(
-    (resolve) =>
-      setTimeout(
-        resolve,
-        ms,
-      ),
-  );
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function normalizeDegree(
-  value: number,
-): number {
-  let result = value % 360;
+function clampString(value: string, maxLength: number): string {
+  return value.length > maxLength ? value.slice(0, maxLength) : value;
+}
+
+function isLanguage(value: unknown): value is ResponseLanguage {
+  return value === "en" || value === "hi";
+}
+
+function getLanguage(value: unknown): ResponseLanguage {
+  return isLanguage(value) ? value : "hi";
+}
+
+function getThinkingLevel(): ThinkingLevel {
+  const value = process.env.GEMINI_THINKING_LEVEL?.trim().toLowerCase();
+
+  if (value === "low" || value === "medium" || value === "high") {
+    return value;
+  }
+
+  return "medium";
+}
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return "Unknown error";
+}
+
+function getErrorStatus(error: unknown): number {
+  if (typeof error === "object" && error !== null && "status" in error) {
+    const status = (
+      error as {
+        status?: unknown;
+      }
+    ).status;
+
+    if (typeof status === "number") {
+      return status;
+    }
+  }
+
+  return 0;
+}
+
+/*
+|--------------------------------------------------------------------------
+| DATE / NUMBER HELPERS
+|--------------------------------------------------------------------------
+*/
+
+function round(value: number, decimals = 4): number {
+  const factor = 10 ** decimals;
+
+  return Math.round(value * factor) / factor;
+}
+
+function normalizeLongitude(longitude: number): number {
+  let result = longitude % 360;
 
   if (result < 0) {
     result += 360;
@@ -662,281 +355,85 @@ function normalizeDegree(
   return result;
 }
 
-function zodiacFromLongitude(
-  longitude: number,
-): ZodiacPosition {
-  const normalized =
-    normalizeDegree(longitude);
+function formatDate(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
 
-  const signIndex =
-    Math.floor(
-      normalized / 30,
-    );
+function addDays(date: Date, days: number): Date {
+  const result = new Date(date);
 
-  const degree =
-    normalized -
-    signIndex * 30;
+  result.setUTCDate(result.getUTCDate() + days);
 
-  const sign =
-    ZODIAC_SIGNS[
-    signIndex
-    ] ?? "Unknown";
+  return result;
+}
+
+function addYears(date: Date, years: number): Date {
+  const result = new Date(date);
+
+  result.setUTCFullYear(result.getUTCFullYear() + years);
+
+  return result;
+}
+
+function daysBetween(start: Date, end: Date): number {
+  return (end.getTime() - start.getTime()) / 86_400_000;
+}
+
+function yearsBetween(start: Date, end: Date): number {
+  return daysBetween(start, end) / 365.2425;
+}
+
+function parseNumber(value: unknown, fallback = 0): number {
+  const number = Number(value);
+
+  return Number.isFinite(number) ? number : fallback;
+}
+
+/*
+|--------------------------------------------------------------------------
+| ZODIAC / NAKSHATRA
+|--------------------------------------------------------------------------
+*/
+
+function getZodiacPosition(longitude: number): ZodiacPosition {
+  const normalized = normalizeLongitude(longitude);
+
+  const signIndex = Math.floor(normalized / 30);
+
+  const degree = normalized - signIndex * 30;
 
   return {
-    sign,
+    sign: ZODIAC_SIGNS[signIndex],
     signIndex,
-    degree: Number(
-      degree.toFixed(6),
-    ),
-    longitude: Number(
-      normalized.toFixed(6),
-    ),
-    formatted:
-      `${degree.toFixed(2)}° ${sign}`,
+    degree: round(degree, 4),
+    longitude: round(normalized, 4),
+    formatted: `${ZODIAC_SIGNS[signIndex]} ${degree.toFixed(2)}°`,
   };
 }
 
-function formatDate(
-  date: Date,
-): string {
-  return date.toISOString();
-}
+function getNakshatra(longitude: number): Nakshatra {
+  const normalized = normalizeLongitude(longitude);
 
-/*
-|--------------------------------------------------------------------------
-| SUMMARY HELPERS
-|--------------------------------------------------------------------------
-*/
+  const nakshatraSize = 360 / 27;
 
-function trimToCharacterLimit(
-  text: string,
-  maxChars: number,
-): string {
-  const normalized =
-    text.trim();
+  const index = Math.min(26, Math.floor(normalized / nakshatraSize));
 
-  if (
-    normalized.length <=
-    maxChars
-  ) {
-    return normalized;
-  }
+  const degreesIntoNakshatra = normalized - index * nakshatraSize;
 
-  const candidate =
-    normalized.slice(
-      0,
-      maxChars,
-    );
+  const pada = Math.min(
+    4,
+    Math.floor(degreesIntoNakshatra / (nakshatraSize / 4)) + 1,
+  );
 
-  const sentenceBreak =
-    Math.max(
-      candidate.lastIndexOf(". "),
-      candidate.lastIndexOf("。"),
-      candidate.lastIndexOf("!\n"),
-      candidate.lastIndexOf("?\n"),
-      candidate.lastIndexOf("\n"),
-    );
-
-  if (
-    sentenceBreak >=
-    Math.floor(maxChars * 0.65)
-  ) {
-    return candidate
-      .slice(
-        0,
-        sentenceBreak + 1,
-      )
-      .trim();
-  }
-
-  const whitespace =
-    candidate.lastIndexOf(
-      " ",
-    );
-
-  if (
-    whitespace >=
-    Math.floor(maxChars * 0.75)
-  ) {
-    return candidate
-      .slice(
-        0,
-        whitespace,
-      )
-      .trim();
-  }
-
-  return candidate.trim();
-}
-
-function formatMessagesForSummary(
-  messages: ChatMessage[],
-): string {
-  return messages
-    .map(
-      (message, index) =>
-        `[${index + 1}] ${message.role ===
-          "user"
-          ? "User"
-          : "Assistant"
-        }:\n${message.content.trim()}`,
-    )
-    .join("\n\n");
-}
-
-function formatMessagesForGemini(
-  messages: ChatMessage[],
-): GeminiContent[] {
-  return messages
-    .filter(
-      (message) =>
-        message.content
-          .trim()
-          .length > 0,
-    )
-    .map(
-      (message) => ({
-        role:
-          message.role ===
-            "assistant"
-            ? "model"
-            : "user",
-
-        parts: [
-          {
-            text:
-              message.content.trim(),
-          },
-        ],
-      }),
-    );
-}
-
-/*
-|--------------------------------------------------------------------------
-| DATE / TIME
-|--------------------------------------------------------------------------
-*/
-
-function parseBirthDateTime(
-  dateOfBirth: string,
-  timeOfBirth: string,
-): {
-  year: number;
-  month: number;
-  day: number;
-  hour: number;
-  minute: number;
-} {
-  const dateParts =
-    dateOfBirth
-      .split("-")
-      .map(Number);
-
-  const timeParts =
-    timeOfBirth
-      .split(":")
-      .map(Number);
-
-  if (
-    dateParts.length !== 3 ||
-    dateParts.some(
-      (value) =>
-        !Number.isFinite(value),
-    )
-  ) {
-    throw new Error(
-      "Invalid date of birth format.",
-    );
-  }
-
-  if (
-    timeParts.length < 2 ||
-    timeParts.some(
-      (value) =>
-        !Number.isFinite(value),
-    )
-  ) {
-    throw new Error(
-      "Invalid time of birth format.",
-    );
-  }
-
-  const year =
-    dateParts[0];
-
-  const month =
-    dateParts[1];
-
-  const day =
-    dateParts[2];
-
-  const hour =
-    timeParts[0];
-
-  const minute =
-    timeParts[1];
-
-  if (
-    year === undefined ||
-    month === undefined ||
-    day === undefined ||
-    hour === undefined ||
-    minute === undefined ||
-    !Number.isInteger(year) ||
-    !Number.isInteger(month) ||
-    !Number.isInteger(day) ||
-    !Number.isInteger(hour) ||
-    !Number.isInteger(minute)
-  ) {
-    throw new Error(
-      "Invalid birth date or time.",
-    );
-  }
-
-  if (
-    month < 1 ||
-    month > 12 ||
-    day < 1 ||
-    day > 31 ||
-    hour < 0 ||
-    hour > 23 ||
-    minute < 0 ||
-    minute > 59
-  ) {
-    throw new Error(
-      "Birth date or time is out of range.",
-    );
-  }
-
-  const calendarDate =
-    new Date(
-      Date.UTC(
-        year,
-        month - 1,
-        day,
-      ),
-    );
-
-  if (
-    calendarDate.getUTCFullYear() !==
-    year ||
-    calendarDate.getUTCMonth() !==
-    month - 1 ||
-    calendarDate.getUTCDate() !==
-    day
-  ) {
-    throw new Error(
-      "Invalid calendar date.",
-    );
-  }
+  const data = NAKSHATRAS[index];
 
   return {
-    year,
-    month,
-    day,
-    hour,
-    minute,
+    index,
+    name: data.name,
+    lord: data.lord,
+    pada,
+    degreesIntoNakshatra: round(degreesIntoNakshatra, 4),
+    formatted: `${data.name} Pada ${pada} (${data.lord})`,
   };
 }
 
@@ -946,714 +443,41 @@ function parseBirthDateTime(
 |--------------------------------------------------------------------------
 */
 
-function resolveTimezoneOffset(
-  timezone: number | string,
-  timezoneId: string | null | undefined,
-  birthDateTime: {
-    year: number;
-    month: number;
-    day: number;
-    hour: number;
-    minute: number;
-  },
-): number {
-  if (
-    typeof timezone ===
-    "number"
-  ) {
-    if (
-      !Number.isFinite(timezone) ||
-      timezone < -14 ||
-      timezone > 14
-    ) {
-      throw new Error(
-        "Invalid birth timezone.",
-      );
-    }
+function parseTimezone(location: BirthLocation): number {
+  const timezone = location.timezone;
 
+  if (typeof timezone === "number") {
     return timezone;
   }
 
-  const timezoneValue =
-    timezone.trim();
+  const parsed = Number(timezone);
 
-  const numericTimezone =
-    Number(timezoneValue);
-
-  if (
-    timezoneValue.length > 0 &&
-    Number.isFinite(
-      numericTimezone,
-    )
-  ) {
-    if (
-      numericTimezone < -14 ||
-      numericTimezone > 14
-    ) {
-      throw new Error(
-        "Invalid birth timezone.",
-      );
-    }
-
-    return numericTimezone;
-  }
-
-  const resolvedTimezoneId =
-    timezoneId?.trim() ||
-    timezoneValue;
-
-  if (!resolvedTimezoneId) {
-    throw new Error(
-      "Invalid birth timezone.",
-    );
-  }
-
-  const {
-    year,
-    month,
-    day,
-    hour,
-    minute,
-  } = birthDateTime;
-
-  const localAsUtc =
-    Date.UTC(
-      year,
-      month - 1,
-      day,
-      hour,
-      minute,
-      0,
-      0,
-    );
-
-  if (
-    !Number.isFinite(
-      localAsUtc,
-    )
-  ) {
-    throw new Error(
-      "Unable to calculate local birth time.",
-    );
-  }
-
-  try {
-    const formatter =
-      new Intl.DateTimeFormat(
-        "en-US",
-        {
-          timeZone:
-            resolvedTimezoneId,
-          calendar: "gregory",
-          numberingSystem:
-            "latn",
-          year: "numeric",
-          month: "2-digit",
-          day: "2-digit",
-          hour: "2-digit",
-          minute: "2-digit",
-          second: "2-digit",
-          hourCycle: "h23",
-        },
-      );
-
-    const parts =
-      formatter.formatToParts(
-        new Date(
-          localAsUtc,
-        ),
-      );
-
-    const values: Record<
-      string,
-      string
-    > = {};
-
-    for (
-      const part of parts
-    ) {
-      if (
-        part.type !==
-        "literal"
-      ) {
-        values[
-          part.type
-        ] = part.value;
-      }
-    }
-
-    const zonedYear =
-      Number(values.year);
-
-    const zonedMonth =
-      Number(values.month);
-
-    const zonedDay =
-      Number(values.day);
-
-    const zonedHour =
-      Number(values.hour);
-
-    const zonedMinute =
-      Number(values.minute);
-
-    const zonedSecond =
-      Number(values.second);
-
-    if (
-      !Number.isInteger(
-        zonedYear,
-      ) ||
-      !Number.isInteger(
-        zonedMonth,
-      ) ||
-      !Number.isInteger(
-        zonedDay,
-      ) ||
-      !Number.isInteger(
-        zonedHour,
-      ) ||
-      !Number.isInteger(
-        zonedMinute,
-      ) ||
-      !Number.isInteger(
-        zonedSecond,
-      )
-    ) {
-      throw new Error(
-        "Unable to determine birth timezone offset.",
-      );
-    }
-
-    const zonedAsUtc =
-      Date.UTC(
-        zonedYear,
-        zonedMonth - 1,
-        zonedDay,
-        zonedHour,
-        zonedMinute,
-        zonedSecond,
-        0,
-      );
-
-    const offset =
-      (zonedAsUtc -
-        localAsUtc) /
-      (60 * 60 * 1000);
-
-    if (
-      !Number.isFinite(
-        offset,
-      ) ||
-      offset < -14 ||
-      offset > 14
-    ) {
-      throw new Error(
-        "Invalid birth timezone offset.",
-      );
-    }
-
-    return Number(
-      offset.toFixed(4),
-    );
-  } catch {
-    throw new Error(
-      `Invalid birth timezone: ${resolvedTimezoneId}`,
-    );
-  }
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
-/*
-|--------------------------------------------------------------------------
-| NAKSHATRA
-|--------------------------------------------------------------------------
-*/
-
-function getNakshatra(
-  siderealLongitude: number,
-): Nakshatra {
-  const longitude =
-    normalizeDegree(
-      siderealLongitude,
-    );
-
-  const nakshatraSize =
-    360 / 27;
-
-  const nakshatraIndex =
-    Math.floor(
-      longitude /
-      nakshatraSize,
-    );
-
-  const nakshatra =
-    NAKSHATRAS[
-    nakshatraIndex
-    ];
-
-  if (!nakshatra) {
-    throw new Error(
-      "Unable to determine nakshatra.",
-    );
-  }
-
-  const positionInsideNakshatra =
-    longitude -
-    nakshatraIndex *
-    nakshatraSize;
-
-  const pada = Math.min(
-    4,
-    Math.floor(
-      positionInsideNakshatra /
-      (nakshatraSize / 4),
-    ) + 1,
-  );
-
-  return {
-    index: nakshatraIndex,
-    name: nakshatra.name,
-    lord: nakshatra.lord,
-    pada,
-    degreesIntoNakshatra:
-      Number(
-        positionInsideNakshatra.toFixed(
-          6,
-        ),
-      ),
-    formatted:
-      `${nakshatra.name} Pada ${pada}`,
-  };
+function getTimezoneId(location: BirthLocation): string | null {
+  return location.timezoneId || null;
 }
 
-/*
-|--------------------------------------------------------------------------
-| VIMSHOTTARI DASHA
-|--------------------------------------------------------------------------
-*/
-
-function getDashaSequenceFromLord(
-  lord: string,
-): string[] {
-  const index =
-    DASHA_SEQUENCE.findIndex(
-      (item) => item === lord,
-    );
-
-  if (index < 0) {
-    return [
-      ...DASHA_SEQUENCE,
-    ];
-  }
-
-  return [
-    ...DASHA_SEQUENCE.slice(
-      index,
-    ),
-    ...DASHA_SEQUENCE.slice(
-      0,
-      index,
-    ),
-  ];
-}
-
-function addYears(
-  date: Date,
-  years: number,
+function buildUtcBirthDate(
+  dateOfBirth: string,
+  timeOfBirth: string,
+  timezone: number,
 ): Date {
-  const wholeYears =
-    Math.floor(years);
+  const [year, month, day] = dateOfBirth.split("-").map(Number);
 
-  const fractionalYears =
-    years - wholeYears;
+  const [hours, minutes, seconds = 0] = timeOfBirth.split(":").map(Number);
 
-  const result =
-    new Date(
-      date.getTime(),
-    );
-
-  result.setUTCFullYear(
-    result.getUTCFullYear() +
-    wholeYears,
+  const localMillis = Date.UTC(
+    year,
+    month - 1,
+    day,
+    hours || 0,
+    minutes || 0,
+    seconds || 0,
   );
 
-  if (
-    fractionalYears === 0
-  ) {
-    return result;
-  }
-
-  return new Date(
-    result.getTime() +
-    fractionalYears *
-    365.2425 *
-    24 *
-    60 *
-    60 *
-    1000,
-  );
-}
-
-function getVimshottariDasha(
-  birthDateUTC: Date,
-  moonSiderealLongitude: number,
-  calculationDate = new Date(),
-): DashaData {
-  const nakshatra =
-    getNakshatra(
-      moonSiderealLongitude,
-    );
-
-  const nakshatraSize =
-    360 / 27;
-
-  const elapsedFraction =
-    nakshatra.degreesIntoNakshatra /
-    nakshatraSize;
-
-  const firstLord =
-    nakshatra.lord;
-
-  const firstDashaYears =
-    DASHA_YEARS[firstLord];
-
-  if (
-    firstDashaYears ===
-    undefined
-  ) {
-    throw new Error(
-      `Unknown dasha lord: ${firstLord}`,
-    );
-  }
-
-  const firstRemainingYears =
-    firstDashaYears *
-    (1 - elapsedFraction);
-
-  const sequence =
-    getDashaSequenceFromLord(
-      firstLord,
-    );
-
-  const mahadashas: Array<{
-    lord: string;
-    start: Date;
-    end: Date;
-    years: number;
-  }> = [];
-
-  let currentStart =
-    new Date(
-      birthDateUTC.getTime(),
-    );
-
-  for (
-    let i = 0;
-    i <
-    sequence.length + 18;
-    i += 1
-  ) {
-    const lord =
-      sequence[
-      i % sequence.length
-      ];
-
-    if (!lord) {
-      break;
-    }
-
-    const fullYears =
-      DASHA_YEARS[lord];
-
-    if (
-      fullYears ===
-      undefined
-    ) {
-      throw new Error(
-        `Unknown dasha lord: ${lord}`,
-      );
-    }
-
-    const years =
-      i === 0
-        ? firstRemainingYears
-        : fullYears;
-
-    const end =
-      addYears(
-        currentStart,
-        years,
-      );
-
-    mahadashas.push({
-      lord,
-      start: new Date(
-        currentStart.getTime(),
-      ),
-      end: new Date(
-        end.getTime(),
-      ),
-      years,
-    });
-
-    currentStart = end;
-
-    if (
-      currentStart >
-      addYears(
-        calculationDate,
-        2,
-      )
-    ) {
-      break;
-    }
-  }
-
-  const currentMahadasha =
-    mahadashas.find(
-      (dasha) =>
-        calculationDate >=
-        dasha.start &&
-        calculationDate <
-        dasha.end,
-    );
-
-  if (
-    !currentMahadasha
-  ) {
-    return {
-      moonNakshatra:
-        nakshatra,
-      mahadasha: null,
-      antardasha: null,
-      timeline:
-        mahadashas.map(
-          (dasha) => ({
-            lord:
-              dasha.lord,
-            start:
-              formatDate(
-                dasha.start,
-              ),
-            end:
-              formatDate(
-                dasha.end,
-              ),
-          }),
-        ),
-    };
-  }
-
-  const antardashaSequence =
-    getDashaSequenceFromLord(
-      currentMahadasha.lord,
-    );
-
-  const mahadashaDurationMs =
-    currentMahadasha.end.getTime() -
-    currentMahadasha.start.getTime();
-
-  let antardashaStart =
-    new Date(
-      currentMahadasha.start.getTime(),
-    );
-
-  let currentAntardasha:
-    | {
-      lord: string;
-      start: Date;
-      end: Date;
-    }
-    | null = null;
-
-  for (
-    const antardashaLord of
-    antardashaSequence
-  ) {
-    const dashaYears =
-      DASHA_YEARS[
-      antardashaLord
-      ];
-
-    if (
-      dashaYears ===
-      undefined
-    ) {
-      continue;
-    }
-
-    const durationMs =
-      mahadashaDurationMs *
-      (dashaYears / 120);
-
-    const antardashaEnd =
-      new Date(
-        antardashaStart.getTime() +
-        durationMs,
-      );
-
-    if (
-      calculationDate >=
-      antardashaStart &&
-      calculationDate <
-      antardashaEnd
-    ) {
-      currentAntardasha = {
-        lord:
-          antardashaLord,
-        start:
-          new Date(
-            antardashaStart.getTime(),
-          ),
-        end:
-          new Date(
-            antardashaEnd.getTime(),
-          ),
-      };
-
-      break;
-    }
-
-    antardashaStart =
-      antardashaEnd;
-  }
-
-  const remainingYears =
-    (
-      currentMahadasha.end.getTime() -
-      calculationDate.getTime()
-    ) /
-    (
-      365.2425 *
-      24 *
-      60 *
-      60 *
-      1000
-    );
-
-  return {
-    moonNakshatra:
-      nakshatra,
-
-    mahadasha: {
-      lord:
-        currentMahadasha.lord,
-      start:
-        formatDate(
-          currentMahadasha.start,
-        ),
-      end:
-        formatDate(
-          currentMahadasha.end,
-        ),
-      remainingYears:
-        Number(
-          remainingYears.toFixed(
-            3,
-          ),
-        ),
-    },
-
-    antardasha:
-      currentAntardasha
-        ? {
-          lord:
-            currentAntardasha.lord,
-          start:
-            formatDate(
-              currentAntardasha.start,
-            ),
-          end:
-            formatDate(
-              currentAntardasha.end,
-            ),
-        }
-        : null,
-
-    timeline:
-      mahadashas.map(
-        (dasha) => ({
-          lord:
-            dasha.lord,
-          start:
-            formatDate(
-              dasha.start,
-            ),
-          end:
-            formatDate(
-              dasha.end,
-            ),
-        }),
-      ),
-  };
-}
-
-/*
-|--------------------------------------------------------------------------
-| HOUSE CALCULATION
-|--------------------------------------------------------------------------
-*/
-
-function findHouseForLongitude(
-  longitude: number,
-  cusps: ArrayLike<number>,
-): number | null {
-  const point =
-    normalizeDegree(
-      longitude,
-    );
-
-  for (
-    let house = 1;
-    house <= 12;
-    house += 1
-  ) {
-    const startValue =
-      cusps[house];
-
-    const nextHouse =
-      house === 12
-        ? 1
-        : house + 1;
-
-    const endValue =
-      cusps[nextHouse];
-
-    if (
-      typeof startValue !==
-      "number" ||
-      typeof endValue !==
-      "number"
-    ) {
-      continue;
-    }
-
-    const start =
-      normalizeDegree(
-        startValue,
-      );
-
-    const end =
-      normalizeDegree(
-        endValue,
-      );
-
-    if (start <= end) {
-      if (
-        point >= start &&
-        point < end
-      ) {
-        return house;
-      }
-    } else if (
-      point >= start ||
-      point < end
-    ) {
-      return house;
-    }
-  }
-
-  return null;
+  return new Date(localMillis - timezone * 60 * 60 * 1000);
 }
 
 /*
@@ -1662,623 +486,354 @@ function findHouseForLongitude(
 |--------------------------------------------------------------------------
 */
 
-async function calculateSwissChart(
-  profile: BirthProfile,
-): Promise<SwissChart> {
-  const location =
-    profile.placeOfBirth;
+function getSwissPlanetId(swe: SwissEph, name: string): number {
+  const map: Record<string, number> = {
+    Sun: swe.SE_SUN,
+    Moon: swe.SE_MOON,
+    Mars: swe.SE_MARS,
+    Mercury: swe.SE_MERCURY,
+    Jupiter: swe.SE_JUPITER,
+    Venus: swe.SE_VENUS,
+    Saturn: swe.SE_SATURN,
+    Uranus: swe.SE_URANUS,
+    Neptune: swe.SE_NEPTUNE,
+    Pluto: swe.SE_PLUTO,
+  };
 
-  if (!location) {
-    throw new Error(
-      "Birth location is missing.",
-    );
+  const planetId = map[name];
+
+  if (typeof planetId !== "number") {
+    throw new Error(`UNKNOWN_PLANET:${name}`);
   }
 
-  const {
-    year,
-    month,
-    day,
-    hour,
-    minute,
-  } =
-    parseBirthDateTime(
-      profile.dateOfBirth,
-      profile.timeOfBirth,
-    );
+  return planetId;
+}
 
-  const timezone =
-    resolveTimezoneOffset(
-      location.timezone,
-      location.timezoneId,
-      {
-        year,
-        month,
-        day,
-        hour,
-        minute,
-      },
-    );
+function getPlanetSymbol(name: string): string {
+  const symbols: Record<string, string> = {
+    Sun: "☉",
+    Moon: "☽",
+    Mars: "♂",
+    Mercury: "☿",
+    Jupiter: "♃",
+    Venus: "♀",
+    Saturn: "♄",
+    Uranus: "♅",
+    Neptune: "♆",
+    Pluto: "♇",
+    Rahu: "☊",
+    Ketu: "☋",
+  };
 
-  const latitude =
-    Number(
-      location.latitude,
-    );
+  return symbols[name] || "";
+}
 
-  const longitude =
-    Number(
-      location.longitude,
-    );
+function findWholeSignHouse(
+  planetLongitude: number,
+  ascendantLongitude: number,
+): number {
+  const planetSign = Math.floor(normalizeLongitude(planetLongitude) / 30);
 
-  if (
-    !Number.isFinite(
-      timezone,
-    )
-  ) {
-    throw new Error(
-      "Invalid birth timezone.",
-    );
+  const ascendantSign = Math.floor(normalizeLongitude(ascendantLongitude) / 30);
+
+  return ((planetSign - ascendantSign + 12) % 12) + 1;
+}
+
+/*
+|--------------------------------------------------------------------------
+| SWISS CHART CALCULATION
+|--------------------------------------------------------------------------
+*/
+
+async function calculateSwissChart(profile: BirthProfile): Promise<SwissChart> {
+  if (!profile.placeOfBirth) {
+    throw new Error("BIRTH_LOCATION_REQUIRED");
   }
 
-  if (
-    !Number.isFinite(
-      latitude,
-    ) ||
-    !Number.isFinite(
-      longitude,
-    )
-  ) {
-    throw new Error(
-      "Invalid birth coordinates.",
-    );
-  }
+  const location = profile.placeOfBirth;
 
-  if (
-    latitude < -90 ||
-    latitude > 90 ||
-    longitude < -180 ||
-    longitude > 180
-  ) {
-    throw new Error(
-      "Birth coordinates are out of range.",
-    );
-  }
+  const timezone = parseTimezone(location);
 
-  const localDecimalHour =
-    hour + minute / 60;
+  const timezoneId = getTimezoneId(location);
 
-  const utcDecimalHour =
-    localDecimalHour -
-    timezone;
+  const utcDate = buildUtcBirthDate(
+    profile.dateOfBirth,
+    profile.timeOfBirth,
+    timezone,
+  );
 
-  const swe =
-    new SwissEph();
+  const year = utcDate.getUTCFullYear();
+
+  const month = utcDate.getUTCMonth() + 1;
+
+  const day = utcDate.getUTCDate();
+
+  const hour =
+    utcDate.getUTCHours() +
+    utcDate.getUTCMinutes() / 60 +
+    utcDate.getUTCSeconds() / 3600;
+
+  const swe = new SwissEph();
 
   try {
     await swe.initSwissEph();
 
-    swe.set_sid_mode(
-      swe.SE_SIDM_LAHIRI,
-      0,
-      0,
-    );
+    swe.set_sid_mode(swe.SE_SIDM_LAHIRI, 0, 0);
 
-    const julianDay =
-      swe.julday(
-        year,
-        month,
-        day,
-        utcDecimalHour,
-      );
+    const julianDay = swe.julday(year, month, day, hour);
 
-    if (
-      typeof julianDay !==
-      "number" ||
-      !Number.isFinite(
-        julianDay,
-      )
-    ) {
-      throw new Error(
-        "Unable to calculate Julian Day.",
-      );
-    }
+    const flags = swe.SEFLG_SWIEPH | swe.SEFLG_SIDEREAL | swe.SEFLG_SPEED;
 
-    const planetDefinitions =
-      [
-        {
-          id: swe.SE_SUN,
-          name: "Sun",
-          symbol: "☉",
-        },
-        {
-          id: swe.SE_MOON,
-          name: "Moon",
-          symbol: "☽",
-        },
-        {
-          id: swe.SE_MERCURY,
-          name: "Mercury",
-          symbol: "☿",
-        },
-        {
-          id: swe.SE_VENUS,
-          name: "Venus",
-          symbol: "♀",
-        },
-        {
-          id: swe.SE_MARS,
-          name: "Mars",
-          symbol: "♂",
-        },
-        {
-          id: swe.SE_JUPITER,
-          name: "Jupiter",
-          symbol: "♃",
-        },
-        {
-          id: swe.SE_SATURN,
-          name: "Saturn",
-          symbol: "♄",
-        },
-        {
-          id: swe.SE_URANUS,
-          name: "Uranus",
-          symbol: "♅",
-        },
-        {
-          id: swe.SE_NEPTUNE,
-          name: "Neptune",
-          symbol: "♆",
-        },
-        {
-          id: swe.SE_PLUTO,
-          name: "Pluto",
-          symbol: "♇",
-        },
-      ];
+    const planetNames = [
+      "Sun",
+      "Moon",
+      "Mars",
+      "Mercury",
+      "Jupiter",
+      "Venus",
+      "Saturn",
+      "Uranus",
+      "Neptune",
+      "Pluto",
+    ];
 
-    const planets: Record<
-      string,
-      PlanetData
-    > = {};
+    const planets: Record<string, PlanetData> = {};
 
-    const flags =
-      swe.SEFLG_SWIEPH |
-      swe.SEFLG_SPEED |
-      swe.SEFLG_SIDEREAL;
+    /*
+    |--------------------------------------------------------------------------
+    | PLANETS
+    |--------------------------------------------------------------------------
+    */
 
-    for (
-      const planet of
-      planetDefinitions
-    ) {
-      const position =
-        swe.calc_ut(
-          julianDay,
-          planet.id,
-          flags,
-        );
+    for (const planetName of planetNames) {
+      const planetId = getSwissPlanetId(swe, planetName);
 
-      const rawLongitude =
-        position[0];
+      const result = swe.calc_ut(julianDay, planetId, flags);
 
-      const rawLatitude =
-        position[1];
+      const values = Array.from(result);
 
-      const rawDistance =
-        position[2];
-
-      const rawSpeed =
-        position[3];
-
-      if (
-        typeof rawLongitude !==
-        "number" ||
-        !Number.isFinite(
-          rawLongitude,
-        )
-      ) {
-        throw new Error(
-          `Invalid longitude returned for ${planet.name}.`,
-        );
+      if (values.length < 4) {
+        throw new Error(`INVALID_SWISS_RESULT:${planetName}`);
       }
 
-      const normalizedLongitude =
-        normalizeDegree(
-          rawLongitude,
-        );
+      const longitude = normalizeLongitude(parseNumber(values[0]));
 
-      planets[
-        planet.name
-      ] = {
-        name:
-          planet.name,
+      const latitude = parseNumber(values[1]);
 
-        symbol:
-          planet.symbol,
+      const distance = parseNumber(values[2]);
 
-        longitude:
-          Number(
-            normalizedLongitude.toFixed(
-              6,
-            ),
-          ),
+      const speed = parseNumber(values[3]);
 
-        latitude:
-          typeof rawLatitude ===
-            "number" &&
-            Number.isFinite(
-              rawLatitude,
-            )
-            ? Number(
-              rawLatitude.toFixed(
-                6,
-              ),
-            )
-            : undefined,
+      planets[planetName] = {
+        name: planetName,
 
-        distance:
-          typeof rawDistance ===
-            "number" &&
-            Number.isFinite(
-              rawDistance,
-            )
-            ? Number(
-              rawDistance.toFixed(
-                8,
-              ),
-            )
-            : undefined,
+        symbol: getPlanetSymbol(planetName),
 
-        speed:
-          typeof rawSpeed ===
-            "number" &&
-            Number.isFinite(
-              rawSpeed,
-            )
-            ? Number(
-              rawSpeed.toFixed(
-                6,
-              ),
-            )
-            : undefined,
+        longitude,
 
-        zodiac:
-          zodiacFromLongitude(
-            normalizedLongitude,
-          ),
+        latitude,
 
-        nakshatra:
-          getNakshatra(
-            normalizedLongitude,
-          ),
+        distance,
+
+        speed,
+
+        zodiac: getZodiacPosition(longitude),
+
+        nakshatra: getNakshatra(longitude),
+
+        house: null,
+
+        retrograde: speed < 0,
       };
     }
 
-    const nodeFlags =
-      swe.SEFLG_SWIEPH |
-      swe.SEFLG_SIDEREAL;
+    /*
+    |--------------------------------------------------------------------------
+    | TRUE NODE / RAHU / KETU
+    |--------------------------------------------------------------------------
+    */
 
-    const rahuPosition =
-      swe.calc_ut(
-        julianDay,
-        swe.SE_TRUE_NODE,
-        nodeFlags,
-      );
+    const nodeResult = swe.calc_ut(julianDay, swe.SE_TRUE_NODE, flags);
 
-    const rahuRawLongitude =
-      rahuPosition[0];
+    const nodeValues = Array.from(nodeResult);
 
-    if (
-      typeof rahuRawLongitude !==
-      "number" ||
-      !Number.isFinite(
-        rahuRawLongitude,
-      )
-    ) {
-      throw new Error(
-        "Invalid Rahu longitude.",
-      );
+    if (nodeValues.length < 1) {
+      throw new Error("INVALID_SWISS_NODE_RESULT");
     }
 
-    const rahuLongitude =
-      normalizeDegree(
-        rahuRawLongitude,
-      );
+    const rahuLongitude = normalizeLongitude(parseNumber(nodeValues[0]));
 
-    const ketuLongitude =
-      normalizeDegree(
-        rahuLongitude + 180,
-      );
+    const ketuLongitude = normalizeLongitude(rahuLongitude + 180);
 
     planets.Rahu = {
       name: "Rahu",
+
       symbol: "☊",
 
-      longitude:
-        Number(
-          rahuLongitude.toFixed(
-            6,
-          ),
-        ),
+      longitude: rahuLongitude,
 
-      zodiac:
-        zodiacFromLongitude(
-          rahuLongitude,
-        ),
+      zodiac: getZodiacPosition(rahuLongitude),
 
-      nakshatra:
-        getNakshatra(
-          rahuLongitude,
-        ),
+      nakshatra: getNakshatra(rahuLongitude),
+
+      house: null,
+
+      retrograde: true,
     };
 
     planets.Ketu = {
       name: "Ketu",
+
       symbol: "☋",
 
-      longitude:
-        Number(
-          ketuLongitude.toFixed(
-            6,
-          ),
-        ),
+      longitude: ketuLongitude,
 
-      zodiac:
-        zodiacFromLongitude(
-          ketuLongitude,
-        ),
+      zodiac: getZodiacPosition(ketuLongitude),
 
-      nakshatra:
-        getNakshatra(
-          ketuLongitude,
-        ),
+      nakshatra: getNakshatra(ketuLongitude),
+
+      house: null,
+
+      retrograde: true,
     };
 
-    const houseResult =
-      swe.houses_ex(
-        julianDay,
-        swe.SEFLG_SIDEREAL,
-        latitude,
-        longitude,
-        "P",
-      );
+    /*
+    |--------------------------------------------------------------------------
+    | HOUSES
+    |--------------------------------------------------------------------------
+    */
 
-    const cusps =
-      houseResult.cusps;
-
-    const ascmc =
-      houseResult.ascmc;
-
-    const ascendantValue =
-      ascmc[0];
-
-    const midheavenValue =
-      ascmc[1];
-
-    if (
-      typeof ascendantValue !==
-      "number" ||
-      !Number.isFinite(
-        ascendantValue,
-      )
-    ) {
-      throw new Error(
-        "Unable to calculate ascendant.",
-      );
-    }
-
-    if (
-      typeof midheavenValue !==
-      "number" ||
-      !Number.isFinite(
-        midheavenValue,
-      )
-    ) {
-      throw new Error(
-        "Unable to calculate midheaven.",
-      );
-    }
-
-    const ascendant =
-      normalizeDegree(
-        ascendantValue,
-      );
-
-    const midheaven =
-      normalizeDegree(
-        midheavenValue,
-      );
-
-    const houses: HouseData[] =
-      [];
-
-    for (
-      let house = 1;
-      house <= 12;
-      house += 1
-    ) {
-      const cuspValue =
-        cusps[house];
-
-      if (
-        typeof cuspValue !==
-        "number" ||
-        !Number.isFinite(
-          cuspValue,
-        )
-      ) {
-        throw new Error(
-          `Unable to calculate house ${house}.`,
-        );
-      }
-
-      const cusp =
-        normalizeDegree(
-          cuspValue,
-        );
-
-      houses.push({
-        house,
-
-        longitude:
-          Number(
-            cusp.toFixed(
-              6,
-            ),
-          ),
-
-        zodiac:
-          zodiacFromLongitude(
-            cusp,
-          ),
-      });
-    }
-
-    Object.values(
-      planets,
-    ).forEach(
-      (planet) => {
-        planet.house =
-          findHouseForLongitude(
-            planet.longitude,
-            cusps,
-          );
-      },
+    const housesResult = swe.houses(
+      julianDay,
+      location.latitude,
+      location.longitude,
+      "P",
     );
 
-    const utcMillis =
-      Date.UTC(
-        year,
-        month - 1,
-        day,
-        0,
-        0,
-        0,
-        0,
-      ) +
-      utcDecimalHour *
-      60 *
-      60 *
-      1000;
+    const houseResultRecord = housesResult as unknown as {
+      cusps?: ArrayLike<number>;
+      ascendant?: number;
+      mc?: number;
+    };
 
-    const birthDateUTC =
-      new Date(
-        utcMillis,
-      );
+    const cusps = houseResultRecord.cusps
+      ? Array.from(houseResultRecord.cusps)
+      : [];
 
-    if (
-      Number.isNaN(
-        birthDateUTC.getTime(),
-      )
-    ) {
-      throw new Error(
-        "Unable to calculate UTC birth time.",
-      );
+    if (cusps.length < 12) {
+      throw new Error("INVALID_SWISS_HOUSE_RESULT");
     }
 
-    const moon =
-      planets.Moon;
+    const ascendantLongitude = normalizeLongitude(
+      parseNumber(houseResultRecord.ascendant, 0),
+    );
+
+    const midheavenLongitude = normalizeLongitude(
+      parseNumber(houseResultRecord.mc, 0),
+    );
+
+    const houses: HouseData[] = Array.from({ length: 12 }, (_, index) => {
+      const longitude = normalizeLongitude(parseNumber(cusps[index], 0));
+
+      return {
+        house: index + 1,
+
+        longitude,
+
+        zodiac: getZodiacPosition(longitude),
+      };
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | WHOLE-SIGN VEDIC HOUSES
+    |--------------------------------------------------------------------------
+    */
+
+    for (const planet of Object.values(planets)) {
+      planet.house = findWholeSignHouse(planet.longitude, ascendantLongitude);
+    }
+
+    const ascendant = {
+      longitude: ascendantLongitude,
+
+      zodiac: getZodiacPosition(ascendantLongitude),
+    };
+
+    const midheaven = {
+      longitude: midheavenLongitude,
+
+      zodiac: getZodiacPosition(midheavenLongitude),
+    };
+
+    /*
+    |--------------------------------------------------------------------------
+    | VIMSHOTTARI DASHA
+    |--------------------------------------------------------------------------
+    */
+
+    const moon = planets.Moon;
 
     if (!moon) {
-      throw new Error(
-        "Moon position was not calculated.",
-      );
+      throw new Error("MOON_CALCULATION_FAILED");
     }
 
-    const dasha =
-      getVimshottariDasha(
-        birthDateUTC,
-        moon.longitude,
-      );
+    const calculationDate = new Date();
 
-    const ayanamsa =
-      swe.get_ayanamsa_ut(
-        julianDay,
-      );
+    const dasha = getVimshottariDasha(
+      moon.nakshatra,
+      profile.dateOfBirth,
+      profile.timeOfBirth,
+      timezone,
+      calculationDate,
+    );
 
-    const resolvedTimezoneId =
-      location.timezoneId ??
-      (typeof location.timezone ===
-        "string" &&
-        location.timezone.includes(
-          "/",
-        )
-        ? location.timezone
-        : null);
+    /*
+    |--------------------------------------------------------------------------
+    | AYANAMSA
+    |--------------------------------------------------------------------------
+    */
+
+    let ayanamsaValue: number | null = null;
+
+    try {
+      const value = swe.get_ayanamsa(julianDay);
+
+      if (typeof value === "number" && Number.isFinite(value)) {
+        ayanamsaValue = round(value, 6);
+      }
+    } catch {
+      ayanamsaValue = null;
+    }
 
     return {
       calculation: {
-        julianDay:
-          Number(
-            julianDay.toFixed(
-              8,
-            ),
-          ),
+        julianDay,
 
-        utcBirthTime:
-          birthDateUTC.toISOString(),
+        utcBirthTime: utcDate.toISOString(),
 
         timezone,
 
-        timezoneId:
-          resolvedTimezoneId,
+        timezoneId,
 
-        latitude,
+        latitude: location.latitude,
 
-        longitude,
+        longitude: location.longitude,
 
-        houseSystem:
-          "Placidus",
+        houseSystem: "Placidus calculation / Whole Sign Vedic interpretation",
 
-        zodiac:
-          "Sidereal",
+        zodiac: "Sidereal",
 
-        ayanamsa:
-          "Lahiri",
+        ayanamsa: "Lahiri",
 
-        ayanamsaValue:
-          typeof ayanamsa ===
-            "number" &&
-            Number.isFinite(
-              ayanamsa,
-            )
-            ? Number(
-              ayanamsa.toFixed(
-                8,
-              ),
-            )
-            : null,
+        ayanamsaValue,
 
-        swissEphemeris:
-          "swisseph-wasm",
+        swissEphemeris: "Swiss Ephemeris",
       },
 
-      ascendant: {
-        longitude:
-          Number(
-            ascendant.toFixed(
-              6,
-            ),
-          ),
+      ascendant,
 
-        zodiac:
-          zodiacFromLongitude(
-            ascendant,
-          ),
-      },
-
-      midheaven: {
-        longitude:
-          Number(
-            midheaven.toFixed(
-              6,
-            ),
-          ),
-
-        zodiac:
-          zodiacFromLongitude(
-            midheaven,
-          ),
-      },
+      midheaven,
 
       planets,
 
@@ -2287,844 +842,305 @@ async function calculateSwissChart(
       dasha,
     };
   } finally {
-    swe.close();
+    try {
+      swe.close();
+    } catch {
+      // Ignore cleanup errors.
+    }
   }
 }
 
 /*
 |--------------------------------------------------------------------------
-| GEMINI RESPONSE PARSER
+| VIMSHOTTARI DASHA
 |--------------------------------------------------------------------------
 */
 
-function parseGeminiResponse(
-  value: unknown,
-): GeminiResponse {
-  if (!isRecord(value)) {
-    return {};
-  }
+function getSequenceIndex(lord: string): number {
+  const index = DASHA_SEQUENCE.indexOf(lord);
 
-  const candidates =
-    value.candidates;
-
-  if (
-    !Array.isArray(
-      candidates,
-    )
-  ) {
-    return {};
-  }
-
-  const parsedCandidates:
-    GeminiCandidate[] = [];
-
-  for (
-    const candidate of
-    candidates
-  ) {
-    if (!isRecord(candidate)) {
-      continue;
-    }
-
-    const finishReason =
-      getString(
-        candidate.finishReason,
-      );
-
-    const contentValue =
-      candidate.content;
-
-    if (
-      !isRecord(
-        contentValue,
-      )
-    ) {
-      parsedCandidates.push({
-        finishReason,
-      });
-
-      continue;
-    }
-
-    const partsValue =
-      contentValue.parts;
-
-    if (
-      !Array.isArray(
-        partsValue,
-      )
-    ) {
-      parsedCandidates.push({
-        content: {},
-        finishReason,
-      });
-
-      continue;
-    }
-
-    const parts:
-      GeminiPart[] = [];
-
-    for (
-      const part of partsValue
-    ) {
-      if (!isRecord(part)) {
-        continue;
-      }
-
-      parts.push({
-        text:
-          getString(
-            part.text,
-          ),
-      });
-    }
-
-    parsedCandidates.push({
-      content: {
-        parts,
-      },
-
-      finishReason,
-    });
-  }
-
-  return {
-    candidates:
-      parsedCandidates,
-  };
+  return index >= 0 ? index : 0;
 }
 
-/*
-|--------------------------------------------------------------------------
-| GEMINI FETCH
-|--------------------------------------------------------------------------
-*/
+function getVimshottariDasha(
+  moonNakshatra: Nakshatra,
+  dateOfBirth: string,
+  timeOfBirth: string,
+  timezone: number,
+  calculationDate: Date,
+): DashaData {
+  const birthDate = buildUtcBirthDate(dateOfBirth, timeOfBirth, timezone);
 
-async function fetchGemini(
-  url: string,
-  apiKey: string,
-  body: unknown,
-): Promise<Response> {
-  const controller =
-    new AbortController();
+  const nakshatraLord = moonNakshatra.lord;
 
-  const timeout =
-    setTimeout(
-      () => {
-        controller.abort();
-      },
-      GEMINI_REQUEST_TIMEOUT_MS,
-    );
+  const nakshatraSize = 360 / 27;
 
-  try {
-    return await fetch(
-      url,
-      {
-        method: "POST",
-
-        headers: {
-          "Content-Type":
-            "application/json",
-
-          "x-goog-api-key":
-            apiKey,
-        },
-
-        body:
-          JSON.stringify(body),
-
-        signal:
-          controller.signal,
-      },
-    );
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-/*
-|--------------------------------------------------------------------------
-| GEMINI ERROR HELPERS
-|--------------------------------------------------------------------------
-*/
-
-function isRetryableGeminiStatus(
-  status: number,
-): boolean {
-  return (
-    status === 408 ||
-    status === 500 ||
-    status === 502 ||
-    status === 503 ||
-    status === 504
+  const fractionElapsed = Math.min(
+    1,
+    Math.max(0, moonNakshatra.degreesIntoNakshatra / nakshatraSize),
   );
-}
 
-function extractGeminiErrorMessage(
-  responseText: string,
-): string {
-  if (!responseText) {
-    return "";
-  }
+  const fullYears = DASHA_YEARS[nakshatraLord] || 7;
 
-  try {
-    const parsed: unknown =
-      JSON.parse(
-        responseText,
-      );
+  const remainingYears = fullYears * (1 - fractionElapsed);
 
-    if (
-      isRecord(parsed) &&
-      isRecord(parsed.error)
-    ) {
-      const message =
-        getString(
-          parsed.error.message,
-        );
+  const elapsedYears = fullYears - remainingYears;
 
-      const status =
-        getString(
-          parsed.error.status,
-        );
+  const firstMahadashaStart = addYears(birthDate, -elapsedYears);
 
-      if (
-        message &&
-        status
-      ) {
-        return `${status}: ${message}`;
-      }
+  const timelineEnd = addYears(calculationDate, 30);
 
-      if (message) {
-        return message;
-      }
-    }
-  } catch {
-    // Response was not JSON.
-  }
+  const timeline: DashaEntry[] = [];
 
-  return responseText;
-}
-
-function getGeminiErrorMessage(
-  status: number,
-  responseText: string,
-): string {
-  const apiMessage =
-    extractGeminiErrorMessage(
-      responseText,
-    );
-
-  if (status === 429) {
-    return apiMessage
-      ? `Gemini quota/rate limit exceeded: ${apiMessage}`
-      : "Gemini API usage limit or quota exceeded.";
-  }
-
-  if (
-    status === 401 ||
-    status === 403
-  ) {
-    return apiMessage
-      ? `Gemini API key is unauthorized: ${apiMessage}`
-      : "Gemini API key is invalid or unauthorized.";
-  }
-
-  if (status === 404) {
-    return apiMessage
-      ? `Gemini model was not found or is not available: ${apiMessage}`
-      : "Gemini model was not found or is not available.";
-  }
-
-  if (
-    isRetryableGeminiStatus(
-      status,
-    )
-  ) {
-    return apiMessage
-      ? `Gemini temporarily unavailable (${status}): ${apiMessage}`
-      : `Gemini temporarily unavailable (${status}).`;
-  }
-
-  return (
-    apiMessage ||
-    `Gemini API returned HTTP ${status}.`
-  );
-}
-
-/*
-|--------------------------------------------------------------------------
-| GEMINI REQUEST BODY
-|--------------------------------------------------------------------------
-*/
-
-function buildGeminiRequestBody(
-  systemInstruction: string,
-  contents: GeminiContent[],
-  options: GeminiRequestOptions,
-): Record<string, unknown> {
-  return {
-    systemInstruction: {
-      parts: [
-        {
-          text:
-            systemInstruction,
-        },
-      ],
-    },
-
-    contents,
-
-    generationConfig: {
-      maxOutputTokens:
-        options.maxOutputTokens,
-
-      thinkingConfig: {
-        thinkingLevel:
-          options.thinkingLevel,
-      },
-    },
+  type MahaEntry = {
+    lord: string;
+    start: Date;
+    end: Date;
   };
-}
 
-/*
-|--------------------------------------------------------------------------
-| GEMINI REQUEST WITH KEY ROTATION
-|--------------------------------------------------------------------------
-*/
+  const mahaPeriods: MahaEntry[] = [];
 
-async function requestGeminiWithKeyRotation(
-  systemInstruction: string,
-  contents: GeminiContent[],
-  options: GeminiRequestOptions,
-): Promise<GeminiResponse> {
-  const apiKeys =
-    getGeminiApiKeys();
+  let currentStart = new Date(firstMahadashaStart);
 
-  if (
-    apiKeys.length === 0
-  ) {
-    throw new Error(
-      "No Gemini API keys are configured.",
-    );
-  }
+  let sequenceIndex = getSequenceIndex(nakshatraLord);
 
-  const url =
-    `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
+  for (let cycle = 0; cycle < 5 && currentStart < timelineEnd; cycle += 1) {
+    for (let i = 0; i < DASHA_SEQUENCE.length; i += 1) {
+      const lord = DASHA_SEQUENCE[(sequenceIndex + i) % DASHA_SEQUENCE.length];
 
-  const body =
-    buildGeminiRequestBody(
-      systemInstruction,
-      contents,
-      options,
-    );
+      const durationYears = DASHA_YEARS[lord];
 
-  let lastError =
-    "Unknown Gemini error.";
+      const currentEnd = addYears(currentStart, durationYears);
 
-  let lastStatus:
-    | number
-    | undefined;
+      mahaPeriods.push({
+        lord,
+        start: new Date(currentStart),
+        end: new Date(currentEnd),
+      });
 
-  for (
-    let keyIndex = 0;
-    keyIndex < apiKeys.length;
-    keyIndex += 1
-  ) {
-    const apiKey =
-      apiKeys[keyIndex];
+      const mahaDays = Math.max(1, daysBetween(currentStart, currentEnd));
 
-    if (!apiKey) {
-      continue;
-    }
+      let antarStart = new Date(currentStart);
 
-    console.log(
-      `Gemini: trying ${MODEL}, key ${keyIndex + 1
-      }/${apiKeys.length}`,
-    );
+      for (let j = 0; j < DASHA_SEQUENCE.length; j += 1) {
+        const antarLord =
+          DASHA_SEQUENCE[(sequenceIndex + i + j) % DASHA_SEQUENCE.length];
 
-    for (
-      let attempt = 0;
-      attempt <=
-      MAX_GEMINI_RETRIES;
-      attempt += 1
-    ) {
-      try {
-        const response =
-          await fetchGemini(
-            url,
-            apiKey,
-            body,
-          );
+        const antarDays = mahaDays * (DASHA_YEARS[antarLord] / 120);
 
-        const responseText =
-          await response.text();
+        let antarEnd = new Date(antarStart.getTime() + antarDays * 86_400_000);
 
-        if (response.ok) {
-          let parsed:
-            GeminiResponse;
-
-          try {
-            const json:
-              unknown =
-              JSON.parse(
-                responseText,
-              );
-
-            parsed =
-              parseGeminiResponse(
-                json,
-              );
-          } catch {
-            throw new Error(
-              "Gemini returned invalid JSON.",
-            );
-          }
-
-          return parsed;
+        if (antarEnd > currentEnd) {
+          antarEnd = new Date(currentEnd);
         }
 
-        lastStatus =
-          response.status;
+        timeline.push({
+          lord: `${lord}/${antarLord}`,
 
-        lastError =
-          getGeminiErrorMessage(
-            response.status,
-            responseText,
-          );
+          start: formatDate(antarStart),
 
-        console.warn(
-          `Gemini ${MODEL}, key ${keyIndex + 1
-          }: HTTP ${response.status
-          }, attempt ${attempt + 1
-          }/${MAX_GEMINI_RETRIES + 1
-          }`,
-        );
+          end: formatDate(antarEnd),
+        });
 
-        /*
-        |--------------------------------------------------------------------------
-        | 429
-        |--------------------------------------------------------------------------
-        |
-        | Move immediately to the next key.
-        |
-        | Important:
-        | Gemini rate limits are applied per project, not per API key.
-        | Therefore keys from different projects are what provide
-        | independent project-level quota pools.
-        |--------------------------------------------------------------------------
-        */
+        antarStart = new Date(antarEnd);
+      }
 
-        if (
-          response.status ===
-          429
-        ) {
-          console.warn(
-            `Gemini ${MODEL}: key ${keyIndex + 1
-            } hit 429. Rotating to the next key.`,
-          );
+      currentStart = new Date(currentEnd);
 
-          break;
-        }
-
-        /*
-        |--------------------------------------------------------------------------
-        | 401 / 403
-        |--------------------------------------------------------------------------
-        */
-
-        if (
-          response.status ===
-          401 ||
-          response.status ===
-          403
-        ) {
-          console.warn(
-            `Gemini ${MODEL}: key ${keyIndex + 1
-            } is unauthorized. Rotating to the next key.`,
-          );
-
-          break;
-        }
-
-        /*
-        |--------------------------------------------------------------------------
-        | 404
-        |--------------------------------------------------------------------------
-        |
-        | Never downgrade the model.
-        |--------------------------------------------------------------------------
-        */
-
-        if (
-          response.status ===
-          404
-        ) {
-          throw new Error(
-            lastError,
-          );
-        }
-
-        /*
-        |--------------------------------------------------------------------------
-        | TRANSIENT SERVER ERRORS
-        |--------------------------------------------------------------------------
-        */
-
-        if (
-          isRetryableGeminiStatus(
-            response.status,
-          )
-        ) {
-          if (
-            attempt <
-            MAX_GEMINI_RETRIES
-          ) {
-            const delay =
-              INITIAL_RETRY_DELAY *
-              2 ** attempt +
-              Math.floor(
-                Math.random() *
-                500,
-              );
-
-            await sleep(
-              delay,
-            );
-
-            continue;
-          }
-
-          console.warn(
-            `Gemini ${MODEL}: key ${keyIndex + 1
-            } exhausted transient retries. Trying next key.`,
-          );
-
-          break;
-        }
-
-        /*
-        |--------------------------------------------------------------------------
-        | OTHER HTTP ERRORS
-        |--------------------------------------------------------------------------
-        */
-
-        throw new Error(
-          lastError,
-        );
-      } catch (error) {
-        const errorMessage =
-          error instanceof Error
-            ? error.message
-            : "Unknown Gemini request error.";
-
-        /*
-        |--------------------------------------------------------------------------
-        | Do not retry non-transient HTTP errors.
-        |--------------------------------------------------------------------------
-        */
-
-        if (
-          lastStatus !==
-          undefined &&
-          !isRetryableGeminiStatus(
-            lastStatus,
-          ) &&
-          lastStatus !== 429 &&
-          lastStatus !== 401 &&
-          lastStatus !== 403
-        ) {
-          throw error;
-        }
-
-        lastError =
-          error instanceof Error
-            ? error.name ===
-              "AbortError"
-              ? "Gemini request timed out."
-              : errorMessage
-            : "Network error while contacting Gemini.";
-
-        console.error(
-          `Gemini ${MODEL}, key ${keyIndex + 1
-          } network/timeout error:`,
-          error,
-        );
-
-        if (
-          attempt <
-          MAX_GEMINI_RETRIES
-        ) {
-          const delay =
-            INITIAL_RETRY_DELAY *
-            2 ** attempt +
-            Math.floor(
-              Math.random() *
-              500,
-            );
-
-          await sleep(
-            delay,
-          );
-
-          continue;
-        }
-
-        console.warn(
-          `Gemini ${MODEL}: key ${keyIndex + 1
-          } network retry exhausted. Trying next key.`,
-        );
-
+      if (currentStart >= timelineEnd) {
         break;
       }
     }
+
+    sequenceIndex = 0;
   }
 
   /*
   |--------------------------------------------------------------------------
-  | ALL KEYS FAILED
+  | CURRENT MAHADASHA
   |--------------------------------------------------------------------------
   */
 
-  if (
-    lastStatus === 429
-  ) {
-    throw new Error(
-      "The astrology service has reached its Gemini API quota. Please try again later.",
-    );
-  }
-
-  if (
-    lastStatus === 401 ||
-    lastStatus === 403
-  ) {
-    throw new Error(
-      "All configured Gemini API keys are unauthorized or unavailable.",
-    );
-  }
-
-  if (
-    lastError.includes(
-      "temporarily unavailable",
-    ) ||
-    lastError.includes(
-      "timed out",
-    ) ||
-    lastError.includes(
-      "Network error",
-    ) ||
-    lastStatus === 408 ||
-    lastStatus === 500 ||
-    lastStatus === 502 ||
-    lastStatus === 503 ||
-    lastStatus === 504
-  ) {
-    throw new Error(
-      "The astrology service is temporarily busy. Please try again in a moment.",
-    );
-  }
-
-  throw new Error(
-    `All Gemini API attempts failed. ${lastError}`,
+  const currentMaha = mahaPeriods.find(
+    (period) => calculationDate >= period.start && calculationDate < period.end,
   );
+
+  let mahadasha:
+    | (DashaPeriod & {
+        remainingYears: number;
+      })
+    | null = null;
+
+  if (currentMaha) {
+    mahadasha = {
+      lord: currentMaha.lord,
+
+      start: formatDate(currentMaha.start),
+
+      end: formatDate(currentMaha.end),
+
+      remainingYears: Math.max(
+        0,
+        yearsBetween(calculationDate, currentMaha.end),
+      ),
+    };
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | CURRENT ANTARDASHA
+  |--------------------------------------------------------------------------
+  */
+
+  let antardasha: DashaPeriod | null = null;
+
+  if (currentMaha) {
+    const currentMahaStart = currentMaha.start;
+
+    const currentMahaEnd = currentMaha.end;
+
+    const currentMahaLord = currentMaha.lord;
+
+    const currentAntar = timeline.find((entry) => {
+      const [mahaLord, antarLord] = entry.lord.split("/");
+
+      if (mahaLord !== currentMahaLord) {
+        return false;
+      }
+
+      const start = new Date(`${entry.start}T00:00:00Z`);
+
+      const end = new Date(`${entry.end}T23:59:59Z`);
+
+      return (
+        start >= currentMahaStart &&
+        end <= addDays(currentMahaEnd, 1) &&
+        calculationDate >= start &&
+        calculationDate <= end &&
+        Boolean(antarLord)
+      );
+    });
+
+    if (currentAntar) {
+      antardasha = {
+        lord: currentAntar.lord.split("/")[1] || "",
+
+        start: currentAntar.start,
+
+        end: currentAntar.end,
+      };
+    }
+  }
+
+  return {
+    moonNakshatra,
+
+    mahadasha,
+
+    antardasha,
+
+    timeline,
+  };
 }
 
 /*
 |--------------------------------------------------------------------------
-| CONVERSATION SUMMARY GENERATION
+| CHART SERIALIZATION
 |--------------------------------------------------------------------------
 */
 
-function buildConversationSummaryInstruction(
-  language: ResponseLanguage,
-): string {
-  const languageName =
-    language === "hi"
-      ? "Hindi"
-      : "English";
+function serializeChartForAI(chart: SwissChart): string {
+  const planets = Object.values(chart.planets).map((planet) => ({
+    name: planet.name,
 
-  return `
-You are creating a compact memory for an ongoing Vedic astrology chat.
+    sign: planet.zodiac.sign,
 
-Your job is NOT to answer the user.
+    degree: round(planet.zodiac.degree, 2),
 
-Create a concise conversation memory that another astrology assistant
-can use later.
+    longitude: round(planet.longitude, 2),
 
-Language:
-${languageName}
+    house: planet.house,
 
-Preserve ONLY information that can affect future answers.
+    nakshatra: planet.nakshatra.name,
 
-IMPORTANT INFORMATION TO PRESERVE:
+    nakshatraLord: planet.nakshatra.lord,
 
-- What the user is asking about.
-- Important facts the user revealed.
-- Important preferences.
-- Important corrections made by the user.
-- Decisions or conclusions already reached.
-- Important dates or time periods discussed.
-- Specific astrology topics already discussed.
-- Questions that remain unresolved.
-- Any important clarification about what the user actually means.
+    pada: planet.nakshatra.pada,
 
-DO NOT preserve:
+    retrograde: planet.retrograde ?? false,
+  }));
 
-- Greetings.
-- Small talk.
-- Repeated chart information.
-- Repeated explanations.
-- Long assistant explanations.
-- Generic astrology definitions.
-- Unimportant wording.
-- Backend/API information.
+  return JSON.stringify(
+    {
+      ascendant: {
+        sign: chart.ascendant.zodiac.sign,
 
-Do not invent anything.
+        degree: round(chart.ascendant.zodiac.degree, 2),
 
-Do not calculate astrology.
-
-Do not change facts.
-
-The summary must be useful as memory, not a transcript.
-
-Maximum length:
-${MAX_SUMMARY_CHARS} characters.
-
-Write a compact bullet-style memory.
-`;
-}
-
-async function generateConversationSummary(
-  previousSummary: string | null,
-  newMessages: ChatMessage[],
-  language: ResponseLanguage,
-): Promise<string> {
-  const summaryInstruction =
-    buildConversationSummaryInstruction(
-      language,
-    );
-
-  const previousSummarySection =
-    previousSummary
-      ? `
-EXISTING MEMORY:
-
-${previousSummary}
-
-Update the existing memory using the new messages below.
-Keep useful information already present unless the new messages
-correct or supersede it.
-`
-      : `
-There is no existing memory yet.
-Create the first compact memory from the messages below.
-`;
-
-  const messagesText =
-    formatMessagesForSummary(
-      newMessages,
-    );
-
-  const summaryPrompt = `
-${previousSummarySection}
-
-NEW CONVERSATION MESSAGES:
-
-${messagesText}
-
-Return ONLY the updated compact memory.
-`;
-
-  const response =
-    await requestGeminiWithKeyRotation(
-      summaryInstruction,
-      [
-        {
-          role: "user",
-          parts: [
-            {
-              text:
-                summaryPrompt,
-            },
-          ],
-        },
-      ],
-      {
-        maxOutputTokens:
-          SUMMARY_MAX_OUTPUT_TOKENS,
-
-        /*
-         * Summary generation is deliberately low-effort.
-         * It is memory compression, not the astrology answer.
-         */
-        thinkingLevel: "low",
+        longitude: round(chart.ascendant.longitude, 2),
       },
-    );
 
-  const candidate =
-    response.candidates?.[0];
+      midheaven: {
+        sign: chart.midheaven.zodiac.sign,
 
-  const parts =
-    candidate
-      ?.content?.parts;
+        degree: round(chart.midheaven.zodiac.degree, 2),
 
-  const summary =
-    Array.isArray(parts)
-      ? parts
-        .map(
-          (part) =>
-            part.text ?? "",
-        )
-        .join("")
-        .trim()
-      : "";
+        longitude: round(chart.midheaven.longitude, 2),
+      },
 
-  if (!summary) {
-    throw new Error(
-      "Gemini returned an empty conversation summary.",
-    );
-  }
+      planets,
 
-  return trimToCharacterLimit(
-    summary,
-    MAX_SUMMARY_CHARS,
+      houses: chart.houses.map((house) => ({
+        house: house.house,
+
+        sign: house.zodiac.sign,
+
+        degree: round(house.zodiac.degree, 2),
+
+        longitude: round(house.longitude, 2),
+      })),
+
+      dasha: {
+        moonNakshatra: chart.dasha.moonNakshatra.name,
+
+        moonNakshatraLord: chart.dasha.moonNakshatra.lord,
+
+        currentMahadasha: chart.dasha.mahadasha,
+
+        currentAntardasha: chart.dasha.antardasha,
+
+        timeline: chart.dasha.timeline,
+      },
+
+      calculation: {
+        zodiac: chart.calculation.zodiac,
+
+        ayanamsa: chart.calculation.ayanamsa,
+
+        ayanamsaValue: chart.calculation.ayanamsaValue,
+
+        houseSystem: chart.calculation.houseSystem,
+      },
+    },
+    null,
+    2,
   );
 }
 
 /*
 |--------------------------------------------------------------------------
-| BUILD CHAT CONTEXT
+| CONVERSATION MEMORY
 |--------------------------------------------------------------------------
 */
 
-function buildConversationMemoryInstruction(
-  summary: string | null,
+function buildConversationMemory(
+  memory: ConversationMemory | null | undefined,
 ): string {
-  if (!summary) {
-    return `
-CONVERSATION MEMORY:
-
-There is currently no older conversation memory.
-
-Use the recent messages supplied in the conversation normally.
-`;
+  if (!memory?.summary) {
+    return "No previous conversation memory is available.";
   }
 
-  return `
-CONVERSATION MEMORY:
-
-The following is a compact memory of older conversation turns.
-
-Use it as context when relevant.
-
-IMPORTANT:
-- Treat it as conversation memory, not as astrology calculations.
-- Do not invent details that are not present.
-- If recent messages conflict with the memory, prefer the recent messages.
-- Do not repeat the memory unnecessarily.
-
-${summary}
-`;
+  return clampString(memory.summary, MAX_SUMMARY_CHARS);
 }
 
 /*
@@ -3137,103 +1153,69 @@ function buildAstrologyContext(
   profile: BirthProfile,
   chart: SwissChart,
   language: ResponseLanguage,
-  conversationSummary: string | null,
+  conversationMemory: string,
 ): string {
-  const location =
-    profile.placeOfBirth;
-
-  if (!location) {
-    throw new Error(
-      "Birth location is missing.",
-    );
-  }
-
-  const planets =
-    Object.entries(
-      chart.planets,
-    )
-      .map(
-        ([name, planet]) =>
-          `${name}: ${planet.zodiac.formatted} | Longitude: ${planet.longitude}° | House: ${planet.house ??
-          "Unknown"
-          } | Nakshatra: ${planet.nakshatra.formatted}`,
-      )
-      .join("\n");
-
-  const houses =
-    chart.houses
-      .map(
-        (house) =>
-          `House ${house.house}: ${house.zodiac.formatted}`,
-      )
-      .join("\n");
+  const chartData = serializeChartForAI(chart);
 
   const languageInstruction =
     language === "hi"
       ? `
-LANGUAGE REQUIREMENT:
+RESPONSE LANGUAGE:
+Hindi.
 
-The user selected Hindi.
+Use natural, fluent Hindi.
 
-Respond entirely in Hindi (हिन्दी).
+English astrology terms may be used where
+they are clearer, for example:
 
-Use natural, clear and conversational Hindi.
+Mahadasha
+Antardasha
+Ascendant
+Nakshatra
+career
+business
+relationship
 
-You may keep standard astrology terminology such as
-Nakshatra, Mahadasha, Antardasha, Ascendant, planets,
-Rashi and house names where this makes the answer clearer.
-
-Do NOT answer in English unless the user specifically
-asks for English.
-
-The final answer must be in Hindi.
+Do not switch the entire answer to English
+unless the user asks for English.
 `
       : `
-LANGUAGE REQUIREMENT:
+RESPONSE LANGUAGE:
+English.
 
-The user selected English.
-
-Respond entirely in English.
-
-Use clear, natural and conversational English.
-
-Do NOT answer in Hindi unless the user specifically
-asks for Hindi.
-
-The final answer must be in English.
+Use clear, natural English.
 `;
 
   return `
-You are AstroAI, a Vedic astrology interpretation assistant.
+==================================================
+ASTROAI VEDIC ASTROLOGY CONTEXT
+==================================================
 
-${languageInstruction}
+${ASTROLOGY_SYSTEM_RULES}
 
-${buildConversationMemoryInstruction(
-    conversationSummary,
-  )}
+==================================================
+INTERPRETATION METHOD
+==================================================
 
-IMPORTANT:
+For important questions, interpret information
+in this order:
 
-Swiss Ephemeris has already calculated the chart data
-below.
+CHART FACT
+→ ASTROLOGICAL MEANING
+→ CONNECTION WITH OTHER RELEVANT FACTORS
+→ EFFECT ON THE USER'S SPECIFIC QUESTION
+→ PRACTICAL CONCLUSION
 
-You MUST use the supplied chart data.
+Do not expose internal reasoning,
+hidden chain-of-thought,
+or private reasoning steps.
 
-Do NOT recalculate planetary positions.
+Give the useful conclusion with concise
+supporting explanation.
 
-Do NOT invent planetary degrees.
-
-Do NOT invent houses.
-
-Do NOT invent Nakshatras.
-
-Do NOT invent Dasha periods.
-
-Your job is to interpret the supplied chart.
-
---------------------------------------------------
+==================================================
 BIRTH PROFILE
---------------------------------------------------
+==================================================
 
 Name:
 ${profile.name}
@@ -3241,215 +1223,576 @@ ${profile.name}
 Gender:
 ${profile.gender || "Not specified"}
 
-Date of Birth:
+Date of birth:
 ${profile.dateOfBirth}
 
-Time of Birth:
+Time of birth:
 ${profile.timeOfBirth}
 
-Birth Place:
-${location.name}
-
-Full Birth Place:
-${location.displayName}
+Place:
+${profile.placeOfBirth?.displayName || "Not available"}
 
 Latitude:
-${location.latitude}
+${profile.placeOfBirth?.latitude ?? "Not available"}
 
 Longitude:
-${location.longitude}
+${profile.placeOfBirth?.longitude ?? "Not available"}
 
 Timezone:
-${chart.calculation.timezoneId || "Unknown"}
+${profile.placeOfBirth?.timezone ?? "Not available"}
 
-UTC Offset:
-UTC${chart.calculation.timezone >=
-      0
-      ? "+"
-      : ""
-    }${chart.calculation.timezone}
+Timezone ID:
+${profile.placeOfBirth?.timezoneId ?? "Not available"}
 
---------------------------------------------------
-SWISS EPHEMERIS
---------------------------------------------------
+==================================================
+CALCULATED VEDIC CHART
+==================================================
 
-Julian Day:
-${chart.calculation.julianDay}
+${chartData}
 
-UTC Birth Time:
-${chart.calculation.utcBirthTime}
+==================================================
+CONVERSATION MEMORY
+==================================================
 
-Zodiac:
-${chart.calculation.zodiac}
+${conversationMemory}
 
-Ayanamsha:
-${chart.calculation.ayanamsa}
+==================================================
+CURRENT DATE
+==================================================
 
-Ayanamsha Value:
-${chart.calculation.ayanamsaValue}
+${new Date().toISOString().slice(0, 10)}
 
-House System:
-${chart.calculation.houseSystem}
+==================================================
+LANGUAGE
+==================================================
 
---------------------------------------------------
-ASCENDANT
---------------------------------------------------
+${languageInstruction}
 
-Ascendant:
-${chart.ascendant.zodiac.formatted}
+==================================================
+IMPORTANT
+==================================================
 
-Ascendant Longitude:
-${chart.ascendant.longitude}°
+The chart above contains calculated
+astrological facts.
 
-Midheaven:
-${chart.midheaven.zodiac.formatted}
+Do not recalculate the chart from
+the birth details.
 
-Midheaven Longitude:
-${chart.midheaven.longitude}°
+Do not invent missing planetary
+positions, houses, Dashas, Nakshatras,
+yogas or aspects.
 
---------------------------------------------------
-PLANETARY POSITIONS
---------------------------------------------------
+Use the supplied chart as the source
+of astrological facts.
 
-${planets}
+The goal is NOT to list everything
+in the chart.
 
---------------------------------------------------
-HOUSES
---------------------------------------------------
+Select the factors relevant to the
+user's question and explain how they
+connect.
 
-${houses}
+Be specific and personalized.
 
---------------------------------------------------
-MOON NAKSHATRA
---------------------------------------------------
-
-Nakshatra:
-${chart.dasha.moonNakshatra.name}
-
-Nakshatra Lord:
-${chart.dasha.moonNakshatra.lord}
-
-Pada:
-${chart.dasha.moonNakshatra.pada}
-
---------------------------------------------------
-VIMSHOTTARI DASHA
---------------------------------------------------
-
-Current Mahadasha:
-${chart.dasha.mahadasha?.lord ?? "Not available"}
-
-Mahadasha Start:
-${chart.dasha.mahadasha?.start ?? "Not available"}
-
-Mahadasha End:
-${chart.dasha.mahadasha?.end ?? "Not available"}
-
-Current Antardasha:
-${chart.dasha.antardasha?.lord ?? "Not available"}
-
-Antardasha Start:
-${chart.dasha.antardasha?.start ?? "Not available"}
-
-Antardasha End:
-${chart.dasha.antardasha?.end ?? "Not available"}
-
---------------------------------------------------
-INTERPRETATION RULES
---------------------------------------------------
-
-1. Use the actual calculated chart.
-
-2. Interpret the chart rather than inventing calculations.
-
-3. For career questions, consider relevant houses,
-   planets, house placements and supplied dasha periods.
-
-4. For relationship questions, consider relevant houses,
-   Venus, Mars, Jupiter, Moon and supplied dasha information.
-
-5. For timing questions, use the supplied Mahadasha
-   and Antardasha dates.
-
-6. If information needed for a requested technique is
-   not supplied, say so clearly.
-
-7. Do not describe astrology as guaranteed fact.
-
-8. Keep answers conversational and useful.
-
-9. Do not mention API keys or backend implementation.
-
-10. ALWAYS follow the selected language.
-
-11. Do not switch languages unless the user explicitly
-    asks to change language.
-
-12. If the user asks a follow-up question, continue in
-    the selected language.
-
-13. AstroAI is designed for Vedic astrology questions only.
-
-    Answer questions related to the user's own birth chart,
-    including career, job, business, money, education,
-    marriage, relationships, family, health-related
-    astrological tendencies, travel, property, spirituality,
-    life patterns, timing, Dashas, and future-oriented
-    astrology questions.
-
-    Do not provide unrelated information such as weather,
-    news, sports, stock prices, cryptocurrency prices,
-    coding help, or general non-astrology information.
-
-    If the user asks an unrelated question, politely explain
-    that AstroAI is designed for Vedic astrology and ask them
-    to ask a question related to their birth chart or
-    astrology.
-
-14. AstroAI currently supports only one birth profile.
-
-    Do not calculate or interpret a second person's birth
-    chart from birth details provided inside the prompt.
-
-    For two-person kundli matching or compatibility,
-    explain that only one birth profile is currently supported.
-
-15. RESPONSE LENGTH AND COMPLETENESS:
-
-    Keep responses concise, practical, and complete.
-
-    Answer the user's exact question first.
-
-    For normal questions, give approximately
-    3 to 7 meaningful points when appropriate.
-
-    For simple questions, keep the answer brief.
-
-    For detailed questions, provide the most relevant
-    information without unnecessary explanation.
-
-    Avoid repetition, filler, long introductions,
-    and unnecessary sections.
-
-    Do not repeat chart information unless it directly
-    supports the answer.
-
-    Always complete the main answer before adding
-    secondary details.
-
-    Never intentionally stop in the middle of a sentence.
-
-    If response space is limited, prioritize:
-
-    1. The direct answer
-    2. The most important chart-based reasoning
-    3. The practical conclusion
-
-    Do not sacrifice the main answer for secondary details.
-
-    End with a clear conclusion when the question requires
-    analysis or explanation.
+Avoid generic horoscope language
+when chart-specific information
+is available.
 `;
+}
+
+/*
+|--------------------------------------------------------------------------
+| ANSWER INSTRUCTION
+|--------------------------------------------------------------------------
+*/
+
+function buildAstroAnswerInstruction(
+  language: ResponseLanguage,
+  conversationTopic: string,
+): string {
+  const languageName = language === "hi" ? "Hindi" : "English";
+
+  return `
+Return ONLY valid JSON.
+
+Do not wrap the JSON in markdown.
+
+JSON schema:
+
+{
+  "answer": "string",
+  "conversationTopic": "string"
+}
+
+LANGUAGE:
+${languageName}
+
+The "answer" field must contain
+the complete user-facing astrology answer.
+
+The "conversationTopic" field should
+be a short description of the current
+astrology discussion topic.
+
+Previous conversation topic:
+${conversationTopic || "None"}
+
+Answer requirements:
+
+- Answer the user's exact question first.
+- Use actual chart evidence.
+- Be specific and personalized.
+- Connect multiple relevant chart factors
+  when appropriate.
+- Explain the relevant astrological factors
+  clearly.
+- Use Dasha timing when relevant.
+- Distinguish tendencies from guarantees.
+- Do not expose internal reasoning.
+- Do not mention API, Gemini, Groq, backend,
+  prompts, system rules, model names or
+  implementation.
+- Do not invent calculations.
+- Do not make generic statements when
+  chart-specific evidence is available.
+- Keep simple questions concise.
+- For detailed questions, provide enough
+  explanation to feel complete.
+- Finish the answer fully.
+
+The response should feel like a thoughtful
+Vedic astrology reading, not like a generic
+horoscope.
+`;
+}
+
+/*
+|--------------------------------------------------------------------------
+| GEMINI API KEYS
+|--------------------------------------------------------------------------
+*/
+
+function getGeminiApiKeys(): string[] {
+  const keys = [
+    process.env.GEMINI_API_KEY,
+    process.env.GEMINI_API_KEY1,
+    process.env.GEMINI_API_KEY2,
+    process.env.GEMINI_API_KEY3,
+    process.env.GEMINI_API_KEY4,
+    process.env.GEMINI_API_KEY5,
+  ];
+
+  return [
+    ...new Set(
+      keys
+        .map((key) => key?.trim())
+        .filter((key): key is string => Boolean(key)),
+    ),
+  ];
+}
+
+/*
+|--------------------------------------------------------------------------
+| GEMINI RESPONSE
+|--------------------------------------------------------------------------
+*/
+
+function extractGeminiText(response: GeminiResponse): string {
+  const parts = response.candidates?.[0]?.content?.parts || [];
+
+  return parts
+    .map((part) => (typeof part.text === "string" ? part.text : ""))
+    .join("")
+    .trim();
+}
+
+function cleanJsonText(text: string): string {
+  let cleaned = text.trim();
+
+  if (cleaned.startsWith("```json")) {
+    cleaned = cleaned.slice(7);
+  }
+
+  if (cleaned.startsWith("```")) {
+    cleaned = cleaned.slice(3);
+  }
+
+  if (cleaned.endsWith("```")) {
+    cleaned = cleaned.slice(0, -3);
+  }
+
+  return cleaned.trim();
+}
+
+function parseAstroAnswerPayload(text: string): AstroAnswerPayload {
+  const cleaned = cleanJsonText(text);
+
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(cleaned);
+  } catch {
+    const start = cleaned.indexOf("{");
+
+    const end = cleaned.lastIndexOf("}");
+
+    if (start === -1 || end === -1 || end <= start) {
+      throw new Error("INVALID_ASTRO_RESPONSE_JSON");
+    }
+
+    parsed = JSON.parse(cleaned.slice(start, end + 1));
+  }
+
+  if (typeof parsed !== "object" || parsed === null) {
+    throw new Error("INVALID_ASTRO_RESPONSE");
+  }
+
+  const value = parsed as Record<string, unknown>;
+
+  const answer = typeof value.answer === "string" ? value.answer.trim() : "";
+
+  const conversationTopic =
+    typeof value.conversationTopic === "string"
+      ? value.conversationTopic.trim()
+      : "";
+
+  if (!answer) {
+    throw new Error("EMPTY_ASTRO_ANSWER");
+  }
+
+  return {
+    answer,
+
+    conversationTopic: conversationTopic || "Vedic astrology",
+  };
+}
+
+/*
+|--------------------------------------------------------------------------
+| GEMINI ERRORS
+|--------------------------------------------------------------------------
+*/
+
+function getGeminiErrorInfo(error: unknown): GeminiErrorInfo {
+  return {
+    status: getErrorStatus(error),
+
+    message: getErrorMessage(error),
+  };
+}
+
+function isRetryableGeminiStatus(status: number): boolean {
+  return (
+    status === 408 ||
+    status === 409 ||
+    status === 429 ||
+    status === 500 ||
+    status === 502 ||
+    status === 503 ||
+    status === 504
+  );
+}
+
+/*
+|--------------------------------------------------------------------------
+| GEMINI REQUEST
+|--------------------------------------------------------------------------
+*/
+
+async function requestGemini(
+  apiKey: string,
+  model: string,
+  systemPrompt: string,
+  question: string,
+): Promise<GeminiResponse> {
+  const controller = new AbortController();
+
+  const timeout = setTimeout(() => controller.abort(), GEMINI_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+        model,
+      )}:generateContent?key=${encodeURIComponent(apiKey)}`,
+      {
+        method: "POST",
+
+        headers: {
+          "Content-Type": "application/json",
+        },
+
+        body: JSON.stringify({
+          system_instruction: {
+            parts: [
+              {
+                text: systemPrompt,
+              },
+            ],
+          },
+
+          contents: [
+            {
+              role: "user",
+
+              parts: [
+                {
+                  text: question,
+                },
+              ],
+            },
+          ],
+
+          generationConfig: {
+            maxOutputTokens: MAX_OUTPUT_TOKENS,
+
+            temperature: 0.75,
+
+            responseMimeType: "application/json",
+
+            thinkingConfig: {
+              thinkingLevel: getThinkingLevel(),
+            },
+          },
+        }),
+
+        signal: controller.signal,
+      },
+    );
+
+    const text = await response.text();
+
+    let data: unknown = null;
+
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch {
+      data = null;
+    }
+
+    if (!response.ok) {
+      const message =
+        typeof data === "object" && data !== null && "error" in data
+          ? JSON.stringify(
+              (
+                data as {
+                  error?: unknown;
+                }
+              ).error,
+            )
+          : text;
+
+      const error = new Error(
+        message || `Gemini request failed with status ${response.status}`,
+      );
+
+      (
+        error as Error & {
+          status?: number;
+        }
+      ).status = response.status;
+
+      throw error;
+    }
+
+    return data as GeminiResponse;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/*
+|--------------------------------------------------------------------------
+| GEMINI FULL FALLBACK
+|--------------------------------------------------------------------------
+|
+| 3.8
+|   -> key 1
+|   -> retry
+|   -> key 2
+|   -> retry
+|   -> ...
+|
+| 3.7
+|   -> all keys
+|
+| 3.6
+|   -> all keys
+|
+| THEN ONLY:
+|
+| Groq
+|--------------------------------------------------------------------------
+*/
+
+async function requestGeminiWithKeyRotation(
+  systemPrompt: string,
+  question: string,
+): Promise<{
+  payload: AstroAnswerPayload;
+  model: string;
+}> {
+  const apiKeys = getGeminiApiKeys();
+
+  if (apiKeys.length === 0) {
+    throw new Error("GEMINI_API_KEY_NOT_CONFIGURED");
+  }
+
+  let lastError: unknown = null;
+
+  for (const model of GEMINI_MODEL_CHAIN) {
+    console.log(`[Gemini] Trying model: ${model}`);
+
+    for (const apiKey of apiKeys) {
+      for (let attempt = 0; attempt <= MAX_GEMINI_RETRIES; attempt += 1) {
+        try {
+          const response = await requestGemini(
+            apiKey,
+            model,
+            systemPrompt,
+            question,
+          );
+
+          const text = extractGeminiText(response);
+
+          if (!text) {
+            throw new Error("GEMINI_EMPTY_RESPONSE");
+          }
+
+          const payload = parseAstroAnswerPayload(text);
+
+          console.log(`[Gemini] Success: ${model}`);
+
+          return {
+            payload,
+            model,
+          };
+        } catch (error) {
+          lastError = error;
+
+          const info = getGeminiErrorInfo(error);
+
+          console.warn(
+            `[Gemini] Failed model=${model}, status=${info.status}, attempt=${attempt + 1}: ${info.message}`,
+          );
+
+          /*
+           * Non-retryable 4xx.
+           *
+           * Move to next key/model.
+           */
+          if (
+            info.status >= 400 &&
+            info.status < 500 &&
+            info.status !== 408 &&
+            info.status !== 409 &&
+            info.status !== 429
+          ) {
+            break;
+          }
+
+          if (!isRetryableGeminiStatus(info.status)) {
+            break;
+          }
+
+          if (attempt >= MAX_GEMINI_RETRIES) {
+            break;
+          }
+
+          await sleep(GEMINI_RETRY_DELAY_MS * (attempt + 1));
+        }
+      }
+    }
+  }
+
+  if (lastError instanceof Error) {
+    throw lastError;
+  }
+
+  throw new Error("GEMINI_ALL_MODELS_FAILED");
+}
+
+/*
+|--------------------------------------------------------------------------
+| GROQ
+|--------------------------------------------------------------------------
+*/
+
+function buildGroqMessages(
+  astrologyContext: string,
+  answerInstruction: string,
+  question: string,
+): {
+  role: "system" | "user";
+  content: string;
+}[] {
+  return [
+    {
+      role: "system",
+
+      content: `
+${astrologyContext}
+
+==================================================
+ANSWER FORMAT
+==================================================
+
+${answerInstruction}
+`,
+    },
+
+    {
+      role: "user",
+
+      content: question,
+    },
+  ];
+}
+
+/*
+|--------------------------------------------------------------------------
+| LOCALIZED ERRORS
+|--------------------------------------------------------------------------
+*/
+
+function getLocalizedError(
+  language: ResponseLanguage,
+  type: "balance" | "unavailable" | "profile" | "location" | "astrology",
+): string {
+  if (language === "hi") {
+    switch (type) {
+      case "balance":
+        return "आपके API अकाउंट का बैलेंस या क्रेडिट कम है। कृपया अपनी API billing और balance जाँचें।";
+
+      case "profile":
+        return "कृपया अपनी जन्म तारीख, जन्म समय और जन्म स्थान की जानकारी पूरी करें।";
+
+      case "location":
+        return "जन्म कुंडली बनाने के लिए जन्म स्थान की जानकारी आवश्यक है।";
+
+      case "astrology":
+        return "कुंडली की गणना करते समय समस्या आई। कृपया जन्म विवरण जाँचकर दोबारा प्रयास करें।";
+
+      default:
+        return "AstroAI अभी उत्तर तैयार नहीं कर पा रहा है। कृपया थोड़ी देर बाद दोबारा प्रयास करें।";
+    }
+  }
+
+  switch (type) {
+    case "balance":
+      return "Your API account balance or credits are low. Please check your API billing and balance.";
+
+    case "profile":
+      return "Please complete your date of birth, time of birth, and birth place.";
+
+    case "location":
+      return "Birth location is required to calculate your birth chart.";
+
+    case "astrology":
+      return "There was a problem calculating your birth chart. Please check your birth details and try again.";
+
+    default:
+      return "AstroAI could not prepare an answer right now. Please try again shortly.";
+  }
 }
 
 /*
@@ -3458,88 +1801,125 @@ INTERPRETATION RULES
 |--------------------------------------------------------------------------
 */
 
-async function sendAstroEmailWithTimeout(
-  profile: BirthProfile,
-  placeOfBirth: BirthLocation,
-  question: string,
-  answer: string,
-): Promise<void> {
-  let timeoutId:
-    | ReturnType<
-      typeof setTimeout
-    >
-    | undefined;
+async function maybeSendEmail({
+  profile,
+  question,
+  answer,
+}: {
+  profile: BirthProfile;
+  question: string;
+  answer: string;
+}): Promise<void> {
+  if (!profile.placeOfBirth) {
+    console.log("📧 EMAIL: place of birth missing, skipping");
+
+    return;
+  }
+
+  console.log("📧 EMAIL: starting send...", {
+    name: profile.name,
+    questionLength: question.length,
+    answerLength: answer.length,
+  });
 
   try {
-    await Promise.race([
-      sendAstroEmail({
-        profile: {
-          name:
-            profile.name,
+    const emailProfile = {
+      name: profile.name,
 
-          dateOfBirth:
-            profile.dateOfBirth,
+      dateOfBirth: profile.dateOfBirth,
 
-          timeOfBirth:
-            profile.timeOfBirth,
+      timeOfBirth: profile.timeOfBirth,
 
-          placeOfBirth,
-        },
+      placeOfBirth: {
+        name: profile.placeOfBirth.name,
 
-        question,
+        displayName: profile.placeOfBirth.displayName,
+      },
+    };
 
-        answer,
-      }),
+    await sendAstroEmail({
+      profile: emailProfile,
+      question,
+      answer,
+    });
 
-      new Promise<never>(
-        (_, reject) => {
-          timeoutId =
-            setTimeout(
-              () => {
-                reject(
-                  new Error(
-                    "Astro email sending timed out.",
-                  ),
-                );
-              },
-              EMAIL_TIMEOUT_MS,
-            );
-        },
-      ),
-    ]);
-  } finally {
-    if (timeoutId) {
-      clearTimeout(
-        timeoutId,
-      );
+    console.log("✅ EMAIL: sendAstroEmail completed successfully");
+  } catch (error) {
+    console.error("❌ EMAIL SEND FAILED:", error);
+  }
+}
+
+/*
+|--------------------------------------------------------------------------
+| CONVERSATION TOPIC
+|--------------------------------------------------------------------------
+*/
+
+function normalizeConversationTopic(value: string): string {
+  return clampString(
+    value.replace(/\s+/g, " ").trim(),
+    MAX_CONVERSATION_TOPIC_CHARS,
+  );
+}
+
+/*
+|--------------------------------------------------------------------------
+| REQUEST VALIDATION
+|--------------------------------------------------------------------------
+*/
+
+function validateProfile(profile: BirthProfile): void {
+  if (!profile || typeof profile !== "object") {
+    throw new Error("INVALID_PROFILE");
+  }
+
+  if (!profile.dateOfBirth || !profile.timeOfBirth) {
+    throw new Error("INVALID_PROFILE");
+  }
+
+  if (!profile.placeOfBirth) {
+    throw new Error("BIRTH_LOCATION_REQUIRED");
+  }
+}
+
+function validateMessages(messages: ChatMessage[]): void {
+  if (!Array.isArray(messages) || messages.length === 0) {
+    throw new Error("MESSAGES_REQUIRED");
+  }
+
+  if (messages.length > MAX_MESSAGES) {
+    throw new Error("TOO_MANY_MESSAGES");
+  }
+
+  for (const message of messages) {
+    if (message.role !== "user" && message.role !== "assistant") {
+      throw new Error("INVALID_MESSAGE_ROLE");
+    }
+
+    if (
+      typeof message.content !== "string" ||
+      message.content.length > MAX_MESSAGE_LENGTH
+    ) {
+      throw new Error("INVALID_MESSAGE");
     }
   }
 }
 
 /*
 |--------------------------------------------------------------------------
-| POST /api/chat
+| POST
 |--------------------------------------------------------------------------
 */
 
-export async function POST(
-  req: NextRequest,
-) {
+export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
-    const body: unknown =
-      await req.json();
+    const body = (await request.json()) as Record<string, unknown>;
 
-    if (!isRecord(body)) {
-      return NextResponse.json(
-        {
-          error:
-            "Invalid request body.",
-        },
-        {
-          status: 400,
-        },
-      );
-    }
+    const language = getLanguage(body.language);
+
+    const profile = body.profile as BirthProfile | undefined;
+
+    const messages = body.messages as ChatMessage[] | undefined;
 
     /*
     |--------------------------------------------------------------------------
@@ -3547,18 +1927,10 @@ export async function POST(
     |--------------------------------------------------------------------------
     */
 
-    const profileValue =
-      body.profile;
-
-    if (
-      !isBirthProfile(
-        profileValue,
-      )
-    ) {
+    if (!profile) {
       return NextResponse.json(
         {
-          error:
-            "Invalid birth profile.",
+          error: getLocalizedError(language, "profile"),
         },
         {
           status: 400,
@@ -3566,25 +1938,31 @@ export async function POST(
       );
     }
 
-    const profile =
-      profileValue;
+    try {
+      validateProfile(profile);
+    } catch (error) {
+      const message = getErrorMessage(error);
 
-    /*
-    |--------------------------------------------------------------------------
-    | LANGUAGE
-    |--------------------------------------------------------------------------
-    */
+      if (message === "BIRTH_LOCATION_REQUIRED") {
+        return NextResponse.json(
+          {
+            error: getLocalizedError(language, "location"),
+          },
+          {
+            status: 400,
+          },
+        );
+      }
 
-    const languageValue =
-      body.language;
-
-    const language:
-      ResponseLanguage =
-      isResponseLanguage(
-        languageValue,
-      )
-        ? languageValue
-        : "en";
+      return NextResponse.json(
+        {
+          error: getLocalizedError(language, "profile"),
+        },
+        {
+          status: 400,
+        },
+      );
+    }
 
     /*
     |--------------------------------------------------------------------------
@@ -3592,16 +1970,13 @@ export async function POST(
     |--------------------------------------------------------------------------
     */
 
-    const messages =
-      parseChatMessages(
-        body.messages,
-      );
-
     if (!messages) {
       return NextResponse.json(
         {
           error:
-            "Invalid chat messages.",
+            language === "hi"
+              ? "कृपया अपना प्रश्न भेजें।"
+              : "Please send your question.",
         },
         {
           status: 400,
@@ -3609,47 +1984,15 @@ export async function POST(
       );
     }
 
-    if (
-      messages.length === 0
-    ) {
+    try {
+      validateMessages(messages);
+    } catch {
       return NextResponse.json(
         {
           error:
-            "No valid chat message provided.",
-        },
-        {
-          status: 400,
-        },
-      );
-    }
-
-    if (
-      messages.length >
-      MAX_MESSAGES
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            `Conversation is too long. Maximum ${MAX_MESSAGES} messages are allowed.`,
-        },
-        {
-          status: 400,
-        },
-      );
-    }
-
-    const oversizedMessage =
-      messages.find(
-        (message) =>
-          message.content.length >
-          MAX_MESSAGE_LENGTH,
-      );
-
-    if (oversizedMessage) {
-      return NextResponse.json(
-        {
-          error:
-            "Message is too long.",
+            language === "hi"
+              ? "संदेश मान्य नहीं है।"
+              : "The message is invalid.",
         },
         {
           status: 400,
@@ -3659,17 +2002,21 @@ export async function POST(
 
     /*
     |--------------------------------------------------------------------------
-    | PROFILE VALIDATION
+    | LATEST USER QUESTION
     |--------------------------------------------------------------------------
     */
 
-    if (
-      !profile.name.trim()
-    ) {
+    const latestUserMessage = [...messages]
+      .reverse()
+      .find((message) => message.role === "user");
+
+    if (!latestUserMessage) {
       return NextResponse.json(
         {
           error:
-            "Name is required.",
+            language === "hi"
+              ? "कृपया अपना प्रश्न भेजें।"
+              : "Please send your question.",
         },
         {
           status: 400,
@@ -3677,159 +2024,62 @@ export async function POST(
       );
     }
 
-    if (
-      !profile.dateOfBirth.trim()
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "Date of birth is required.",
-        },
-        {
-          status: 400,
-        },
-      );
-    }
-
-    if (
-      !profile.timeOfBirth.trim()
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "Time of birth is required.",
-        },
-        {
-          status: 400,
-        },
-      );
-    }
-
-    if (
-      !profile.placeOfBirth
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "Please select a birth location.",
-        },
-        {
-          status: 400,
-        },
-      );
-    }
-
-    const placeOfBirth =
-      profile.placeOfBirth;
+    const question = latestUserMessage.content.trim();
 
     /*
     |--------------------------------------------------------------------------
-    | OPTIONAL CONVERSATION MEMORY FROM CLIENT
-    |--------------------------------------------------------------------------
-    |
-    | Frontend should send:
-    |
-    | conversationSummary
-    | conversationSummaryMessageCount
-    |
-    | from the previous API response.
+    | CONVERSATION KEY
     |--------------------------------------------------------------------------
     */
 
-    const suppliedSummary =
-      parseOptionalString(
-        body.conversationSummary,
-      );
+    const conversationKey = [
+      profile.name,
 
-    const suppliedSummaryMessageCount =
-      parseOptionalNonNegativeInt(
-        body.conversationSummaryMessageCount,
-      );
+      profile.dateOfBirth,
 
-    const conversationSummary =
-      suppliedSummary
-        ? trimToCharacterLimit(
-          suppliedSummary,
-          MAX_SUMMARY_CHARS,
-        )
-        : null;
+      profile.timeOfBirth,
+
+      profile.placeOfBirth?.latitude,
+
+      profile.placeOfBirth?.longitude,
+    ]
+      .map(String)
+      .join("|");
 
     /*
     |--------------------------------------------------------------------------
-    | GET LATEST USER QUESTION
+    | CONVERSATION MEMORY
     |--------------------------------------------------------------------------
     */
 
-    const latestUserIndex =
-      [...messages]
-        .map(
-          (
-            message,
-            index,
-          ) => ({
-            message,
-            index,
-          }),
-        )
-        .reverse()
-        .find(
-          ({ message }) =>
-            message.role ===
-            "user" &&
-            message.content
-              .trim()
-              .length > 0,
-        )?.index;
+    let conversationMemory: ConversationMemory | null = null;
 
-    if (
-      latestUserIndex ===
-      undefined
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "Question is required.",
-        },
-        {
-          status: 400,
-        },
-      );
-    }
-
-    const latestUserMessage =
-      messages[
-      latestUserIndex
-      ];
-
-    const question =
-      latestUserMessage?.content.trim();
-
-    if (!question) {
-      return NextResponse.json(
-        {
-          error:
-            "Question is required.",
-        },
-        {
-          status: 400,
-        },
-      );
+    try {
+      conversationMemory = getConversationMemory(conversationKey);
+    } catch (error) {
+      console.warn("[Memory] Read failed:", getErrorMessage(error));
     }
 
     /*
     |--------------------------------------------------------------------------
-    | GEMINI KEY CHECK
+    | SWISS CHART
     |--------------------------------------------------------------------------
     */
 
-    if (
-      getGeminiApiKeys()
-        .length === 0
-    ) {
+    let chart: SwissChart;
+
+    try {
+      chart = await calculateSwissChart(profile);
+    } catch (error) {
+      console.error("[Swiss Ephemeris] Error:", error);
+
+      const errorMessage = getErrorMessage(error);
+
+      console.error("[Swiss Ephemeris] Details:", errorMessage);
+
       return NextResponse.json(
         {
-          error:
-            "No Gemini API keys are configured.",
+          error: getLocalizedError(language, "astrology"),
         },
         {
           status: 500,
@@ -3839,362 +2089,205 @@ export async function POST(
 
     /*
     |--------------------------------------------------------------------------
-    | CALCULATE CHART
+    | PREVIOUS TOPIC
     |--------------------------------------------------------------------------
     */
 
-    const chart =
-      await calculateSwissChart(
-        profile,
+    let previousTopic = "Vedic astrology";
+
+    if (conversationMemory?.summary) {
+      const topicMatch = conversationMemory.summary.match(
+        /(?:topic|conversation topic)\s*:\s*(.+)/i,
       );
 
-    /*
-    |--------------------------------------------------------------------------
-    | CONVERSATION WINDOW
-    |--------------------------------------------------------------------------
-    |
-    | Only messages up to the current user question are relevant.
-    |--------------------------------------------------------------------------
-    */
-
-    const conversationMessages =
-      messages.slice(
-        0,
-        latestUserIndex + 1,
-      );
-
-    /*
-    |--------------------------------------------------------------------------
-    | RECENT MESSAGES
-    |--------------------------------------------------------------------------
-    */
-
-    const recentMessages =
-      conversationMessages.slice(
-        -MAX_RECENT_MESSAGES,
-      );
-
-    /*
-    |--------------------------------------------------------------------------
-    | OLDER MESSAGES
-    |--------------------------------------------------------------------------
-    |
-    | These are NOT normally sent raw to Gemini.
-    | They are represented by conversationSummary.
-    |--------------------------------------------------------------------------
-    */
-
-    const olderMessages =
-      conversationMessages.slice(
-        0,
-        Math.max(
-          0,
-          conversationMessages.length -
-          MAX_RECENT_MESSAGES,
-        ),
-      );
-
-    let finalSummary =
-      conversationSummary;
-
-    let finalSummaryMessageCount =
-      suppliedSummaryMessageCount ??
-      0;
-
-    let summaryWasUpdated =
-      false;
-
-    /*
-    |--------------------------------------------------------------------------
-    | DETERMINE WHETHER SUMMARY NEEDS TO BE CREATED/UPDATED
-    |--------------------------------------------------------------------------
-    */
-
-    const summaryIsMissing =
-      !finalSummary &&
-      olderMessages.length > 0;
-
-    const summaryIsStale =
-      Boolean(
-        finalSummary &&
-        suppliedSummaryMessageCount !==
-        null &&
-        olderMessages.length -
-        suppliedSummaryMessageCount >=
-        SUMMARY_UPDATE_INTERVAL_MESSAGES,
-      );
-
-    /*
-    |--------------------------------------------------------------------------
-    | CREATE / UPDATE SUMMARY
-    |--------------------------------------------------------------------------
-    */
-
-    if (
-      summaryIsMissing ||
-      summaryIsStale
-    ) {
-      try {
-        let messagesForSummary:
-          ChatMessage[];
-
-        let previousSummaryForUpdate:
-          string | null;
-
-        if (
-          finalSummary &&
-          suppliedSummaryMessageCount !==
-          null
-        ) {
-          /*
-          |--------------------------------------------------------------------------
-          | Only send newly aged-out messages for the update.
-          |
-          | Existing memory already represents everything before
-          | suppliedSummaryMessageCount.
-          |--------------------------------------------------------------------------
-          */
-
-          messagesForSummary =
-            olderMessages.slice(
-              suppliedSummaryMessageCount,
-            );
-
-          previousSummaryForUpdate =
-            finalSummary;
-        } else {
-          /*
-          |--------------------------------------------------------------------------
-          | First summary creation.
-          |--------------------------------------------------------------------------
-          */
-
-          messagesForSummary =
-            olderMessages;
-
-          previousSummaryForUpdate =
-            null;
-        }
-
-        if (
-          messagesForSummary.length >
-          0
-        ) {
-          finalSummary =
-            await generateConversationSummary(
-              previousSummaryForUpdate,
-              messagesForSummary,
-              language,
-            );
-
-          /*
-          |--------------------------------------------------------------------------
-          | This summary now covers all messages that are currently
-          | outside the recent window.
-          |--------------------------------------------------------------------------
-          */
-
-          finalSummaryMessageCount =
-            olderMessages.length;
-
-          summaryWasUpdated =
-            true;
-
-          console.log(
-            `Conversation summary ${previousSummaryForUpdate
-              ? "updated"
-              : "created"
-            }: ${finalSummary.length
-            } characters, covering ${finalSummaryMessageCount
-            } messages.`,
-          );
-        }
-      } catch (summaryError) {
-        /*
-        |--------------------------------------------------------------------------
-        | IMPORTANT QUALITY FALLBACK
-        |--------------------------------------------------------------------------
-        |
-        | If summary generation fails, do NOT silently lose old context.
-        |
-        | For this request only, send the full available conversation
-        | instead of giving Gemini an incomplete context.
-        |
-        | This may use more tokens on this exceptional request, but
-        | protects answer quality.
-        |--------------------------------------------------------------------------
-        */
-
-        console.error(
-          "Conversation summary generation failed. Falling back to full conversation for this request:",
-          summaryError,
-        );
-
-        finalSummary =
-          null;
-
-        finalSummaryMessageCount =
-          suppliedSummaryMessageCount ??
-          0;
+      if (topicMatch?.[1]) {
+        previousTopic = normalizeConversationTopic(topicMatch[1]);
       }
     }
 
     /*
     |--------------------------------------------------------------------------
-    | BUILD GEMINI CONTENTS
-    |--------------------------------------------------------------------------
-    |
-    | Normal case:
-    |
-    |   conversation summary
-    |   +
-    |   last N messages
-    |
-    | Fallback case:
-    |
-    |   full conversation
-    |
+    | ASTROLOGY CONTEXT
     |--------------------------------------------------------------------------
     */
 
-    const messagesToSend =
-      finalSummary
-        ? recentMessages
-        : conversationMessages;
-
-    const contents =
-      formatMessagesForGemini(
-        messagesToSend,
-      );
-
-    if (
-      contents.length === 0
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "No valid chat messages were provided.",
-        },
-        {
-          status: 400,
-        },
-      );
-    }
-
-    /*
-    |--------------------------------------------------------------------------
-    | BUILD ASTROLOGY CONTEXT
-    |--------------------------------------------------------------------------
-    */
-
-    const astrologyContext =
-      buildAstrologyContext(
-        profile,
-        chart,
-        language,
-        finalSummary,
-      );
-
-    /*
-    |--------------------------------------------------------------------------
-    | ASK GEMINI
-    |--------------------------------------------------------------------------
-    */
-
-    const geminiResponse =
-      await requestGeminiWithKeyRotation(
-        astrologyContext,
-        contents,
-        {
-          maxOutputTokens:
-            MAX_OUTPUT_TOKENS,
-
-          thinkingLevel:
-            getThinkingLevel(),
-        },
-      );
-
-    const candidate =
-      geminiResponse
-        .candidates?.[0];
-
-    const parts =
-      candidate
-        ?.content?.parts;
-
-    const answer =
-      Array.isArray(parts)
-        ? parts
-          .map(
-            (part) =>
-              part.text ?? "",
-          )
-          .join("")
-          .trim()
-        : "";
-
-    if (!answer) {
-      throw new Error(
-        "Gemini returned an empty response.",
-      );
-    }
-
-    console.log(
-      `Gemini ${MODEL} finishReason: ${candidate?.finishReason ??
-      "UNKNOWN"
-      }`,
+    const astrologyContext = buildAstrologyContext(
+      profile,
+      chart,
+      language,
+      buildConversationMemory(conversationMemory),
     );
 
-    if (
-      candidate?.finishReason ===
-      "MAX_TOKENS"
-    ) {
-      console.warn(
-        `Gemini ${MODEL} reached MAX_TOKENS. Consider increasing MAX_OUTPUT_TOKENS or lowering GEMINI_THINKING_LEVEL if this happens frequently.`,
-      );
-    }
+    const answerInstruction = buildAstroAnswerInstruction(
+      language,
+      previousTopic,
+    );
 
     /*
     |--------------------------------------------------------------------------
-    | SEND EMAIL
+    | GEMINI FIRST
     |--------------------------------------------------------------------------
     */
 
+    let answerPayload: AstroAnswerPayload | null = null;
+
+    let provider: "gemini" | "groq" = "gemini";
+
+    let providerModel = "";
+
     try {
-      await sendAstroEmailWithTimeout(
-        profile,
-        placeOfBirth,
-        question,
-        answer,
+      const geminiResult = await requestGeminiWithKeyRotation(
+        astrologyContext,
+
+        `
+${answerInstruction}
+
+USER QUESTION:
+
+${question}
+`,
       );
 
-      console.log(
-        "AstroAI email sent successfully.",
+      answerPayload = geminiResult.payload;
+
+      provider = "gemini";
+
+      providerModel = geminiResult.model;
+    } catch (geminiError) {
+      /*
+       * Gemini is completely exhausted.
+       *
+       * ONLY NOW do we use Groq.
+       */
+      console.error(
+        "[Gemini] All Gemini attempts failed. Moving to Groq.",
+        getErrorMessage(geminiError),
       );
-    } catch (emailError) {
+
       /*
       |--------------------------------------------------------------------------
-      | Email failure should NOT break the user's chat response.
+      | GROQ PROVIDER FALLBACK
       |--------------------------------------------------------------------------
       */
 
-      console.error(
-        "AstroAI email sending failed:",
-        emailError,
+      try {
+        const groqResult = await callGroq(
+          buildGroqMessages(astrologyContext, answerInstruction, question),
+        );
+
+        answerPayload = parseAstroAnswerPayload(groqResult.answer);
+
+        provider = "groq";
+
+        providerModel = process.env.GROQ_MODEL?.trim() || "openai/gpt-oss-120b";
+      } catch (groqError) {
+        const groqMessage = getErrorMessage(groqError);
+
+        console.error("[Groq] Failed:", groqMessage);
+
+        if (groqMessage === "GROQ_INSUFFICIENT_BALANCE") {
+          return NextResponse.json(
+            {
+              error: getLocalizedError(language, "balance"),
+            },
+            {
+              status: 402,
+            },
+          );
+        }
+
+        if (groqMessage === "GROQ_API_KEY_NOT_CONFIGURED") {
+          return NextResponse.json(
+            {
+              error: getLocalizedError(language, "unavailable"),
+            },
+            {
+              status: 503,
+            },
+          );
+        }
+
+        return NextResponse.json(
+          {
+            error: getLocalizedError(language, "unavailable"),
+          },
+          {
+            status: 503,
+          },
+        );
+      }
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | SAFETY CHECK
+    |--------------------------------------------------------------------------
+    */
+
+    if (!answerPayload) {
+      return NextResponse.json(
+        {
+          error: getLocalizedError(language, "unavailable"),
+        },
+        {
+          status: 503,
+        },
       );
     }
+
+    const answer = answerPayload.answer.trim();
+
+    /*
+    |--------------------------------------------------------------------------
+    | UPDATED TOPIC
+    |--------------------------------------------------------------------------
+    */
+
+    const updatedConversationTopic = normalizeConversationTopic(
+      answerPayload.conversationTopic || previousTopic,
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | SAVE CONVERSATION MEMORY
+    |--------------------------------------------------------------------------
+    */
+
+    const memoryText = `
+Topic: ${updatedConversationTopic}
+
+Latest user question:
+${question}
+
+Latest astrology answer:
+${answer}
+`.trim();
+
+    try {
+      setConversationMemory(conversationKey, {
+        summary: clampString(memoryText, MAX_SUMMARY_CHARS),
+
+        summaryMessageCount: messages.length,
+      });
+    } catch (error) {
+      console.warn("[Memory] Write failed:", getErrorMessage(error));
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | OPTIONAL EMAIL
+    |--------------------------------------------------------------------------
+    */
+
+    await maybeSendEmail({
+      profile,
+      question,
+      answer,
+    });
 
     /*
     |--------------------------------------------------------------------------
     | RESPONSE
-    |--------------------------------------------------------------------------
-    |
-    | Frontend should store:
-    |
-    | conversationSummary
-    | conversationSummaryMessageCount
-    |
-    | and send them back on the next request.
     |--------------------------------------------------------------------------
     */
 
@@ -4205,38 +2298,24 @@ export async function POST(
 
       chart,
 
-      /*
-      |--------------------------------------------------------------------------
-      | Conversation memory
-      |--------------------------------------------------------------------------
-      */
+      conversationTopic: updatedConversationTopic,
 
-      conversationSummary:
-        finalSummary,
+      conversationSummary: updatedConversationTopic,
 
-      conversationSummaryMessageCount:
-        finalSummary
-          ? finalSummaryMessageCount
-          : suppliedSummaryMessageCount ??
-          0,
+      conversationSummaryMessageCount: messages.length,
 
-      conversationSummaryUpdated:
-        summaryWasUpdated,
+      conversationSummaryUpdated: true,
+
+      provider,
+
+      model: providerModel,
     });
   } catch (error) {
-    console.error(
-      "AstroAI API error:",
-      error,
-    );
-
-    const message =
-      error instanceof Error
-        ? error.message
-        : "Unknown server error.";
+    console.error("[/api/chat] Unexpected error:", error);
 
     return NextResponse.json(
       {
-        error: message,
+        error: "AstroAI could not process the request.",
       },
       {
         status: 500,
