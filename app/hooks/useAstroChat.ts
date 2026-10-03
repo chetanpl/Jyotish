@@ -1,11 +1,6 @@
 "use client";
 
-import {
-  useEffect,
-  useRef,
-  useState,
-  type KeyboardEvent,
-} from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 
 import {
   validateChatRequest,
@@ -15,15 +10,11 @@ import {
   type ValidationKey,
 } from "@/lib/astro-ui";
 
-import type {
-  BirthProfileState,
-  UiText,
-} from "@/components/astro/types";
+import type { BirthProfileState, UiText } from "@/components/astro/types";
 
 export const CHAT_COOLDOWN_SECONDS = 60;
 
-const COOLDOWN_STORAGE_KEY =
-  "pal-jyotish-ai-chat-cooldown-until";
+const COOLDOWN_STORAGE_KEY = "pal-jyotish-ai-chat-cooldown-until";
 
 const COOLDOWN_BYPASS_PARAM = "bypass";
 const COOLDOWN_BYPASS_CODE = "7890";
@@ -35,11 +26,9 @@ const COOLDOWN_BYPASS_CODE = "7890";
  * so a page refresh does not create a completely new chat
  * session for feedback purposes.
  */
-const CHAT_SESSION_STORAGE_KEY =
-  "pal-jyotish-ai-chat-session-id";
+const CHAT_SESSION_STORAGE_KEY = "pal-jyotish-ai-chat-session-id";
 
-const FEEDBACK_SHOWN_STORAGE_PREFIX =
-  "pal-jyotish-feedback-shown:";
+const FEEDBACK_SHOWN_STORAGE_PREFIX = "pal-jyotish-feedback-shown:";
 
 /* =========================================================
    CONTENT VALIDATION
@@ -76,9 +65,7 @@ const BLOCKED_WORDS = [
   "orgasm",
 ];
 
-function normalizeForValidation(
-  value: string,
-): string {
+function normalizeForValidation(value: string): string {
   return value
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, " ")
@@ -86,11 +73,8 @@ function normalizeForValidation(
     .trim();
 }
 
-function containsBlockedWord(
-  value: string,
-): boolean {
-  const normalized =
-    normalizeForValidation(value);
+function containsBlockedWord(value: string): boolean {
+  const normalized = normalizeForValidation(value);
 
   if (!normalized) {
     return false;
@@ -98,29 +82,19 @@ function containsBlockedWord(
 
   const words = normalized.split(" ");
 
-  return words.some((word) =>
-    BLOCKED_WORDS.includes(word),
-  );
+  return words.some((word) => BLOCKED_WORDS.includes(word));
 }
 
-function hasTooManyConsecutiveSpecialCharacters(
-  value: string,
-): boolean {
+function hasTooManyConsecutiveSpecialCharacters(value: string): boolean {
   return /[^a-zA-Z0-9\s]{3,}/.test(value);
 }
 
-function validateUserInput(
-  value: string,
-): string | null {
+function validateUserInput(value: string): string | null {
   if (containsBlockedWord(value)) {
     return "Please avoid abusive or explicit language.";
   }
 
-  if (
-    hasTooManyConsecutiveSpecialCharacters(
-      value,
-    )
-  ) {
+  if (hasTooManyConsecutiveSpecialCharacters(value)) {
     return "Please use no more than 2 special characters together.";
   }
 
@@ -138,9 +112,7 @@ function hasCooldownBypass(): boolean {
 
   try {
     return (
-      new URLSearchParams(
-        window.location.search,
-      ).get(COOLDOWN_BYPASS_PARAM) ===
+      new URLSearchParams(window.location.search).get(COOLDOWN_BYPASS_PARAM) ===
       COOLDOWN_BYPASS_CODE
     );
   } catch {
@@ -173,22 +145,15 @@ function getOrCreateChatSessionId(): string {
   }
 
   try {
-    const existing =
-      window.sessionStorage.getItem(
-        CHAT_SESSION_STORAGE_KEY,
-      );
+    const existing = window.sessionStorage.getItem(CHAT_SESSION_STORAGE_KEY);
 
     if (existing) {
       return existing;
     }
 
-    const newSessionId =
-      crypto.randomUUID();
+    const newSessionId = crypto.randomUUID();
 
-    window.sessionStorage.setItem(
-      CHAT_SESSION_STORAGE_KEY,
-      newSessionId,
-    );
+    window.sessionStorage.setItem(CHAT_SESSION_STORAGE_KEY, newSessionId);
 
     return newSessionId;
   } catch {
@@ -208,46 +173,35 @@ function getInitialCooldownSeconds(): number {
    HOOK
    ========================================================= */
 
-export function useAstroChat({
-  profile,
-  language,
-  t,
-}: Options) {
-  const [sessionId] = useState<string>(
-    getOrCreateChatSessionId,
-  );
+export function useAstroChat({ profile, language, t }: Options) {
+  const [sessionId] = useState<string>(getOrCreateChatSessionId);
 
-  const [input, setInput] =
-    useState<string>("");
+  const [input, setInput] = useState<string>("");
 
-  const [messages, setMessages] =
-    useState<AstroMessage[]>([]);
+  const [messages, setMessages] = useState<AstroMessage[]>([]);
 
-  const [sending, setSending] =
-    useState<boolean>(false);
+  const [sending, setSending] = useState<boolean>(false);
 
   const [validationMessage, setValidationMessage] =
     useState<ValidationKey | null>(null);
 
-  const [
-    inputValidationError,
-    setInputValidationError,
-  ] = useState<string | null>(null);
+  const [inputValidationError, setInputValidationError] = useState<
+    string | null
+  >(null);
 
-  const [conversationTopic, setConversationTopic] =
-    useState<string>("");
+  const [conversationTopic, setConversationTopic] = useState<string>("");
 
-  const [cooldownRemaining, setCooldownRemaining] =
-    useState<number>(
-      getInitialCooldownSeconds,
-    );
+  const [cooldownRemaining, setCooldownRemaining] = useState<number>(
+    getInitialCooldownSeconds,
+  );
 
   /**
    * First successful assistant message that gets
    * the feedback form.
    */
-  const [feedbackMessageId, setFeedbackMessageId] =
-    useState<string | null>(null);
+  const [feedbackMessageId, setFeedbackMessageId] = useState<string | null>(
+    null,
+  );
 
   /**
    * Controls the temporary "How did we do?" notice.
@@ -255,20 +209,16 @@ export function useAstroChat({
    * The FeedbackBox itself remains visible after this
    * notification disappears.
    */
-  const [
-    feedbackNotificationVisible,
-    setFeedbackNotificationVisible,
-  ] = useState<boolean>(false);
+  const [feedbackNotificationVisible, setFeedbackNotificationVisible] =
+    useState<boolean>(false);
 
   /**
    * Web Audio API context used for the tiny feedback
    * notification sound.
    */
-  const audioContextRef =
-    useRef<AudioContext | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
 
-  const notificationTimeoutRef =
-    useRef<number | null>(null);
+  const notificationTimeoutRef = useRef<number | null>(null);
 
   /* =======================================================
      FEEDBACK STORAGE
@@ -284,11 +234,7 @@ export function useAstroChat({
     }
 
     try {
-      return (
-        window.sessionStorage.getItem(
-          getFeedbackStorageKey(),
-        ) === "true"
-      );
+      return window.sessionStorage.getItem(getFeedbackStorageKey()) === "true";
     } catch {
       return false;
     }
@@ -300,10 +246,7 @@ export function useAstroChat({
     }
 
     try {
-      window.sessionStorage.setItem(
-        getFeedbackStorageKey(),
-        "true",
-      );
+      window.sessionStorage.setItem(getFeedbackStorageKey(), "true");
     } catch {
       // Ignore sessionStorage errors.
     }
@@ -327,12 +270,10 @@ export function useAstroChat({
 
     try {
       if (!audioContextRef.current) {
-        audioContextRef.current =
-          new window.AudioContext();
+        audioContextRef.current = new window.AudioContext();
       }
 
-      const context =
-        audioContextRef.current;
+      const context = audioContextRef.current;
 
       if (context.state === "suspended") {
         void context.resume();
@@ -353,8 +294,7 @@ export function useAstroChat({
     }
 
     try {
-      const context =
-        audioContextRef.current;
+      const context = audioContextRef.current;
 
       if (!context) {
         return;
@@ -364,45 +304,25 @@ export function useAstroChat({
         void context.resume();
       }
 
-      const now =
-        context.currentTime;
+      const now = context.currentTime;
 
-      const gain =
-        context.createGain();
+      const gain = context.createGain();
 
-      gain.gain.setValueAtTime(
-        0.0001,
-        now,
-      );
+      gain.gain.setValueAtTime(0.0001, now);
 
-      gain.gain.exponentialRampToValueAtTime(
-        0.045,
-        now + 0.02,
-      );
+      gain.gain.exponentialRampToValueAtTime(0.045, now + 0.02);
 
-      gain.gain.exponentialRampToValueAtTime(
-        0.0001,
-        now + 0.32,
-      );
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.32);
 
-      gain.connect(
-        context.destination,
-      );
+      gain.connect(context.destination);
 
-      const oscillator =
-        context.createOscillator();
+      const oscillator = context.createOscillator();
 
       oscillator.type = "sine";
 
-      oscillator.frequency.setValueAtTime(
-        660,
-        now,
-      );
+      oscillator.frequency.setValueAtTime(660, now);
 
-      oscillator.frequency.exponentialRampToValueAtTime(
-        880,
-        now + 0.16,
-      );
+      oscillator.frequency.exponentialRampToValueAtTime(880, now + 0.16);
 
       oscillator.connect(gain);
 
@@ -431,28 +351,17 @@ export function useAstroChat({
    * The form itself does NOT disappear afterwards.
    */
   function showFeedbackNotification(): void {
-    if (
-      notificationTimeoutRef.current !==
-      null
-    ) {
-      window.clearTimeout(
-        notificationTimeoutRef.current,
-      );
+    if (notificationTimeoutRef.current !== null) {
+      window.clearTimeout(notificationTimeoutRef.current);
     }
 
-    setFeedbackNotificationVisible(
-      true,
-    );
+    setFeedbackNotificationVisible(true);
 
-    notificationTimeoutRef.current =
-      window.setTimeout(() => {
-        setFeedbackNotificationVisible(
-          false,
-        );
+    notificationTimeoutRef.current = window.setTimeout(() => {
+      setFeedbackNotificationVisible(false);
 
-        notificationTimeoutRef.current =
-          null;
-      }, 4200);
+      notificationTimeoutRef.current = null;
+    }, 4200);
   }
 
   /* =======================================================
@@ -461,13 +370,8 @@ export function useAstroChat({
 
   useEffect(() => {
     return () => {
-      if (
-        notificationTimeoutRef.current !==
-        null
-      ) {
-        window.clearTimeout(
-          notificationTimeoutRef.current,
-        );
+      if (notificationTimeoutRef.current !== null) {
+        window.clearTimeout(notificationTimeoutRef.current);
       }
 
       try {
@@ -487,9 +391,7 @@ export function useAstroChat({
   useEffect(() => {
     if (hasCooldownBypass()) {
       try {
-        window.localStorage.removeItem(
-          COOLDOWN_STORAGE_KEY,
-        );
+        window.localStorage.removeItem(COOLDOWN_STORAGE_KEY);
       } catch {
         // Ignore localStorage errors.
       }
@@ -497,39 +399,20 @@ export function useAstroChat({
       return;
     }
 
-    let timeoutId:
-      | number
-      | undefined;
+    let timeoutId: number | undefined;
 
     try {
-      const saved = Number(
-        window.localStorage.getItem(
-          COOLDOWN_STORAGE_KEY,
-        ),
-      );
+      const saved = Number(window.localStorage.getItem(COOLDOWN_STORAGE_KEY));
 
-      if (
-        Number.isFinite(saved) &&
-        saved > 0
-      ) {
-        const remainingSeconds =
-          Math.ceil(
-            (saved - Date.now()) / 1000,
-          );
+      if (Number.isFinite(saved) && saved > 0) {
+        const remainingSeconds = Math.ceil((saved - Date.now()) / 1000);
 
         if (remainingSeconds > 0) {
-          timeoutId = window.setTimeout(
-            () => {
-              setCooldownRemaining(
-                remainingSeconds,
-              );
-            },
-            0,
-          );
+          timeoutId = window.setTimeout(() => {
+            setCooldownRemaining(remainingSeconds);
+          }, 0);
         } else {
-          window.localStorage.removeItem(
-            COOLDOWN_STORAGE_KEY,
-          );
+          window.localStorage.removeItem(COOLDOWN_STORAGE_KEY);
         }
       }
     } catch {
@@ -538,9 +421,7 @@ export function useAstroChat({
 
     return () => {
       if (timeoutId !== undefined) {
-        window.clearTimeout(
-          timeoutId,
-        );
+        window.clearTimeout(timeoutId);
       }
     };
   }, []);
@@ -554,34 +435,24 @@ export function useAstroChat({
       return;
     }
 
-    const intervalId =
-      window.setInterval(() => {
-        setCooldownRemaining(
-          (current) => {
-            const next = Math.max(
-              0,
-              current - 1,
-            );
+    const intervalId = window.setInterval(() => {
+      setCooldownRemaining((current) => {
+        const next = Math.max(0, current - 1);
 
-            if (next === 0) {
-              try {
-                window.localStorage.removeItem(
-                  COOLDOWN_STORAGE_KEY,
-                );
-              } catch {
-                // Ignore localStorage errors.
-              }
-            }
+        if (next === 0) {
+          try {
+            window.localStorage.removeItem(COOLDOWN_STORAGE_KEY);
+          } catch {
+            // Ignore localStorage errors.
+          }
+        }
 
-            return next;
-          },
-        );
-      }, 1000);
+        return next;
+      });
+    }, 1000);
 
     return () => {
-      window.clearInterval(
-        intervalId,
-      );
+      window.clearInterval(intervalId);
     };
   }, [cooldownRemaining]);
 
@@ -594,22 +465,15 @@ export function useAstroChat({
       return;
     }
 
-    const endsAt =
-      Date.now() +
-      CHAT_COOLDOWN_SECONDS * 1000;
+    const endsAt = Date.now() + CHAT_COOLDOWN_SECONDS * 1000;
 
     try {
-      window.localStorage.setItem(
-        COOLDOWN_STORAGE_KEY,
-        String(endsAt),
-      );
+      window.localStorage.setItem(COOLDOWN_STORAGE_KEY, String(endsAt));
     } catch {
       // Ignore localStorage errors.
     }
 
-    setCooldownRemaining(
-      CHAT_COOLDOWN_SECONDS,
-    );
+    setCooldownRemaining(CHAT_COOLDOWN_SECONDS);
   }
 
   /* =======================================================
@@ -617,9 +481,7 @@ export function useAstroChat({
      ======================================================= */
 
   const validationText =
-    validationMessage === null
-      ? null
-      : t.validation[validationMessage];
+    validationMessage === null ? null : t.validation[validationMessage];
 
   function clearValidation(): void {
     setValidationMessage(null);
@@ -630,36 +492,26 @@ export function useAstroChat({
      INPUT CHANGE
      ======================================================= */
 
-  function handleInputChange(
-    value: string,
-  ): void {
+  function handleInputChange(value: string): void {
     setInput(value);
     setValidationMessage(null);
 
-    const contentError =
-      validateUserInput(value);
+    const contentError = validateUserInput(value);
 
-    setInputValidationError(
-      contentError,
-    );
+    setInputValidationError(contentError);
   }
 
   /* =======================================================
      QUICK QUESTIONS
      ======================================================= */
 
-  function selectQuickQuestion(
-    question: string,
-  ): void {
+  function selectQuickQuestion(question: string): void {
     setInput(question);
     setValidationMessage(null);
 
-    const contentError =
-      validateUserInput(question);
+    const contentError = validateUserInput(question);
 
-    setInputValidationError(
-      contentError,
-    );
+    setInputValidationError(contentError);
   }
 
   /* =======================================================
@@ -667,14 +519,10 @@ export function useAstroChat({
      ======================================================= */
 
   function canSend(): boolean {
-    const contentError =
-      validateUserInput(input);
+    const contentError = validateUserInput(input);
 
     return (
-      validateChatRequest(
-        profile,
-        input,
-      ) === null &&
+      validateChatRequest(profile, input) === null &&
       contentError === null &&
       inputValidationError === null &&
       !sending &&
@@ -687,36 +535,24 @@ export function useAstroChat({
      ======================================================= */
 
   async function sendMessage(): Promise<void> {
-    if (
-      sending ||
-      cooldownRemaining > 0
-    ) {
+    if (sending || cooldownRemaining > 0) {
       return;
     }
 
     const question = input.trim();
 
-    const contentError =
-      validateUserInput(question);
+    const contentError = validateUserInput(question);
 
     if (contentError !== null) {
-      setInputValidationError(
-        contentError,
-      );
+      setInputValidationError(contentError);
 
       return;
     }
 
-    const validationKey =
-      validateChatRequest(
-        profile,
-        question,
-      );
+    const validationKey = validateChatRequest(profile, question);
 
     if (validationKey !== null) {
-      setValidationMessage(
-        validationKey,
-      );
+      setValidationMessage(validationKey);
 
       return;
     }
@@ -739,10 +575,7 @@ export function useAstroChat({
       content: question,
     };
 
-    setMessages((current) => [
-      ...current,
-      userMessage,
-    ]);
+    setMessages((current) => [...current, userMessage]);
 
     setInput("");
     setValidationMessage(null);
@@ -754,51 +587,41 @@ export function useAstroChat({
        ===================================================== */
 
     try {
-      const response = await fetch(
-        "/api/chat",
-        {
-          method: "POST",
+      const response = await fetch("/api/chat", {
+        method: "POST",
 
-          headers: {
-            "Content-Type":
-              "application/json",
+        headers: {
+          "Content-Type": "application/json",
 
-            Accept:
-              "application/json",
-          },
-
-          body: JSON.stringify({
-            sessionId,
-
-            profile,
-
-            language,
-
-            messages: [
-              {
-                role: "user",
-                content: question,
-              },
-            ],
-
-            conversationTopic,
-          }),
+          Accept: "application/json",
         },
-      );
 
-      const data =
-        (await response.json()) as ChatResponse;
+        body: JSON.stringify({
+          sessionId,
+
+          profile,
+
+          language,
+
+          messages: [
+            {
+              role: "user",
+              content: question,
+            },
+          ],
+
+          conversationTopic,
+        }),
+      });
+
+      const data = (await response.json()) as ChatResponse;
 
       if (!response.ok) {
-        throw new Error(
-          data.error ?? t.errors.chat,
-        );
+        throw new Error(data.error ?? t.errors.chat);
       }
 
       const answer =
-        typeof data.message === "string"
-          ? data.message
-          : t.errors.emptyAnswer;
+        typeof data.message === "string" ? data.message : t.errors.emptyAnswer;
 
       /* ===================================================
          ASSISTANT MESSAGE
@@ -811,10 +634,7 @@ export function useAstroChat({
         question,
       };
 
-      setMessages((current) => [
-        ...current,
-        assistantMessage,
-      ]);
+      setMessages((current) => [...current, assistantMessage]);
 
       /* ===================================================
          FIRST SUCCESSFUL ANSWER → FEEDBACK
@@ -832,15 +652,12 @@ export function useAstroChat({
        * triggered again after a page refresh during the
        * same browser session.
        */
-      const feedbackAlreadyShown =
-        hasFeedbackAlreadyBeenShown();
+      const feedbackAlreadyShown = hasFeedbackAlreadyBeenShown();
 
       if (!feedbackAlreadyShown) {
         markFeedbackAsShown();
 
-        setFeedbackMessageId(
-          assistantMessage.id,
-        );
+        setFeedbackMessageId(assistantMessage.id);
 
         showFeedbackNotification();
 
@@ -852,16 +669,13 @@ export function useAstroChat({
       =================================================== */
 
       setConversationTopic(
-        typeof data.conversationTopic ===
-          "string"
+        typeof data.conversationTopic === "string"
           ? data.conversationTopic
           : "",
       );
     } catch (error: unknown) {
       const errorMessage =
-        error instanceof Error
-          ? error.message
-          : t.errors.generic;
+        error instanceof Error ? error.message : t.errors.generic;
 
       const errorMessageItem: AstroMessage = {
         id: createMessageId(),
@@ -870,10 +684,7 @@ export function useAstroChat({
         question,
       };
 
-      setMessages((current) => [
-        ...current,
-        errorMessageItem,
-      ]);
+      setMessages((current) => [...current, errorMessageItem]);
     } finally {
       setSending(false);
       startCooldown();
@@ -884,13 +695,8 @@ export function useAstroChat({
      KEYBOARD
      ======================================================= */
 
-  function handleKeyDown(
-    event: KeyboardEvent<HTMLTextAreaElement>,
-  ): void {
-    if (
-      event.key === "Enter" &&
-      !event.shiftKey
-    ) {
+  function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>): void {
+    if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
 
       void sendMessage();

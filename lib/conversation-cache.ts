@@ -4,31 +4,16 @@ type ConversationMemory = {
   expiresAt: number;
 };
 
-const cache = new Map<
-  string,
-  ConversationMemory
->();
+const cache = new Map<string, ConversationMemory>();
 
-const CACHE_TTL =
-  Number(
-    process.env.CONVERSATION_CACHE_TTL ??
-      86400,
-  ) * 1000;
+const CACHE_TTL = Number(process.env.CONVERSATION_CACHE_TTL ?? 86400) * 1000;
 
-function isExpired(
-  memory: ConversationMemory,
-) {
-  return (
-    Date.now() >=
-    memory.expiresAt
-  );
+function isExpired(memory: ConversationMemory) {
+  return Date.now() >= memory.expiresAt;
 }
 
-export function getConversationMemory(
-  sessionId: string,
-) {
-  const memory =
-    cache.get(sessionId);
+export function getConversationMemory(sessionId: string) {
+  const memory = cache.get(sessionId);
 
   console.log("🔎 CACHE GET:", {
     sessionId,
@@ -51,18 +36,14 @@ export function getConversationMemory(
 
   console.log("✅ CACHE HIT:", {
     sessionId,
-    summaryMessageCount:
-      memory.summaryMessageCount,
-    summaryLength:
-      memory.summary.length,
+    summaryMessageCount: memory.summaryMessageCount,
+    summaryLength: memory.summary.length,
   });
 
   return {
-    summary:
-      memory.summary,
+    summary: memory.summary,
 
-    summaryMessageCount:
-      memory.summaryMessageCount,
+    summaryMessageCount: memory.summaryMessageCount,
   };
 }
 
@@ -75,32 +56,22 @@ export function setConversationMemory(
 ) {
   console.log("💾 CACHE SET:", {
     sessionId,
-    summaryMessageCount:
-      memory.summaryMessageCount,
-    summaryLength:
-      memory.summary.length,
+    summaryMessageCount: memory.summaryMessageCount,
+    summaryLength: memory.summary.length,
   });
 
-  cache.set(
-    sessionId,
-    {
-      summary:
-        memory.summary,
+  cache.set(sessionId, {
+    summary: memory.summary,
 
-      summaryMessageCount:
-        memory.summaryMessageCount,
+    summaryMessageCount: memory.summaryMessageCount,
 
-      expiresAt:
-        Date.now() + CACHE_TTL,
-    },
-  );
+    expiresAt: Date.now() + CACHE_TTL,
+  });
 
   console.log("📦 CACHE SIZE:", cache.size);
 }
 
-export function deleteConversationMemory(
-  sessionId: string,
-) {
+export function deleteConversationMemory(sessionId: string) {
   cache.delete(sessionId);
 }
 

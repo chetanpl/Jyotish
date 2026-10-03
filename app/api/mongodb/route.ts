@@ -1,16 +1,13 @@
 import { NextResponse } from "next/server";
 import clientPromise from "@/lib/mongodb";
 
-const DB_NAME =
-  process.env.MONGODB_DB?.trim() || "astroai";
+const DB_NAME = process.env.MONGODB_DB?.trim() || "astroai";
 
 export async function GET() {
   try {
     const client = await clientPromise;
 
-    await client
-      .db(DB_NAME)
-      .command({ ping: 1 });
+    await client.db(DB_NAME).command({ ping: 1 });
 
     console.log("✅ MONGODB: connection successful");
 
@@ -20,18 +17,12 @@ export async function GET() {
       database: DB_NAME,
     });
   } catch (error) {
-    console.error(
-      "❌ MONGODB: connection failed",
-      error,
-    );
+    console.error("❌ MONGODB: connection failed", error);
 
     return NextResponse.json(
       {
         success: false,
-        error:
-          error instanceof Error
-            ? error.message
-            : String(error),
+        error: error instanceof Error ? error.message : String(error),
       },
       { status: 500 },
     );

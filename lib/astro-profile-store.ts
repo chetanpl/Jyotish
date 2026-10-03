@@ -21,52 +21,30 @@ function readProfile(): BirthProfile {
   }
 
   try {
-    const saved =
-      window.localStorage.getItem(
-        STORAGE_KEY,
-      );
+    const saved = window.localStorage.getItem(STORAGE_KEY);
 
     if (!saved) {
       return EMPTY_PROFILE;
     }
 
-    const parsed: unknown =
-      JSON.parse(saved);
+    const parsed: unknown = JSON.parse(saved);
 
-    if (
-      typeof parsed !== "object" ||
-      parsed === null
-    ) {
+    if (typeof parsed !== "object" || parsed === null) {
       return EMPTY_PROFILE;
     }
 
-    const data =
-      parsed as Record<string, unknown>;
+    const data = parsed as Record<string, unknown>;
 
     return {
-      name:
-        typeof data.name === "string"
-          ? data.name
-          : "",
+      name: typeof data.name === "string" ? data.name : "",
 
-      gender:
-        typeof data.gender === "string"
-          ? data.gender
-          : "",
+      gender: typeof data.gender === "string" ? data.gender : "",
 
-      dateOfBirth:
-        typeof data.dateOfBirth === "string"
-          ? data.dateOfBirth
-          : "",
+      dateOfBirth: typeof data.dateOfBirth === "string" ? data.dateOfBirth : "",
 
-      timeOfBirth:
-        typeof data.timeOfBirth === "string"
-          ? data.timeOfBirth
-          : "",
+      timeOfBirth: typeof data.timeOfBirth === "string" ? data.timeOfBirth : "",
 
-      placeOfBirth: isBirthLocation(
-        data.placeOfBirth,
-      )
+      placeOfBirth: isBirthLocation(data.placeOfBirth)
         ? data.placeOfBirth
         : null,
     };
@@ -83,9 +61,7 @@ function getServerSnapshot(): BirthProfile {
   return EMPTY_PROFILE;
 }
 
-function subscribe(
-  listener: Listener,
-): () => void {
+function subscribe(listener: Listener): () => void {
   listeners.add(listener);
 
   if (!initialized) {
@@ -93,9 +69,7 @@ function subscribe(
     initialized = true;
   }
 
-  function handleStorage(
-    event: StorageEvent,
-  ): void {
+  function handleStorage(event: StorageEvent): void {
     if (event.key !== STORAGE_KEY) {
       return;
     }
@@ -107,18 +81,12 @@ function subscribe(
     }
   }
 
-  window.addEventListener(
-    "storage",
-    handleStorage,
-  );
+  window.addEventListener("storage", handleStorage);
 
   return () => {
     listeners.delete(listener);
 
-    window.removeEventListener(
-      "storage",
-      handleStorage,
-    );
+    window.removeEventListener("storage", handleStorage);
   };
 }
 
@@ -128,16 +96,11 @@ function notify(): void {
   }
 }
 
-function persistProfile(
-  nextProfile: BirthProfile,
-): void {
+function persistProfile(nextProfile: BirthProfile): void {
   snapshot = nextProfile;
 
   try {
-    window.localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify(nextProfile),
-    );
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(nextProfile));
   } catch {
     // localStorage उपलब्ध न होने पर app चलता रहेगा।
   }
@@ -147,21 +110,15 @@ function persistProfile(
 
 export function useBirthProfile(): readonly [
   BirthProfile,
-  <K extends keyof BirthProfile>(
-    key: K,
-    value: BirthProfile[K],
-  ) => void,
+  <K extends keyof BirthProfile>(key: K, value: BirthProfile[K]) => void,
 ] {
-  const profile =
-    useSyncExternalStore(
-      subscribe,
-      getSnapshot,
-      getServerSnapshot,
-    );
+  const profile = useSyncExternalStore(
+    subscribe,
+    getSnapshot,
+    getServerSnapshot,
+  );
 
-  function updateProfile<
-    K extends keyof BirthProfile,
-  >(
+  function updateProfile<K extends keyof BirthProfile>(
     key: K,
     value: BirthProfile[K],
   ): void {
@@ -171,8 +128,5 @@ export function useBirthProfile(): readonly [
     });
   }
 
-  return [
-    profile,
-    updateProfile,
-  ] as const;
+  return [profile, updateProfile] as const;
 }

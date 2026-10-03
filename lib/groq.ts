@@ -9,24 +9,17 @@ export type GroqResult = {
   answer: string;
 };
 
-const GROQ_MODEL =
-  process.env.GROQ_MODEL?.trim() || "openai/gpt-oss-120b";
+const GROQ_MODEL = process.env.GROQ_MODEL?.trim() || "openai/gpt-oss-120b";
 
 const GROQ_MAX_OUTPUT_TOKENS = Number(
   process.env.GROQ_MAX_OUTPUT_TOKENS || "6144",
 );
 
-const GROQ_TIMEOUT_MS = Number(
-  process.env.GROQ_TIMEOUT_MS || "30000",
-);
+const GROQ_TIMEOUT_MS = Number(process.env.GROQ_TIMEOUT_MS || "30000");
 
-const GROQ_MAX_RETRIES = Number(
-  process.env.GROQ_MAX_RETRIES || "2",
-);
+const GROQ_MAX_RETRIES = Number(process.env.GROQ_MAX_RETRIES || "2");
 
-const GROQ_RETRY_DELAY_MS = Number(
-  process.env.GROQ_RETRY_DELAY_MS || "1000",
-);
+const GROQ_RETRY_DELAY_MS = Number(process.env.GROQ_RETRY_DELAY_MS || "1000");
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -76,11 +69,7 @@ function getErrorMessage(error: unknown): string {
 }
 
 function getErrorStatus(error: unknown): number {
-  if (
-    typeof error === "object" &&
-    error !== null &&
-    "status" in error
-  ) {
+  if (typeof error === "object" && error !== null && "status" in error) {
     const status = (error as { status?: unknown }).status;
 
     if (typeof status === "number") {
@@ -116,9 +105,7 @@ function isInsufficientBalanceError(error: unknown): boolean {
   );
 }
 
-export async function callGroq(
-  messages: GroqMessage[],
-): Promise<GroqResult> {
+export async function callGroq(messages: GroqMessage[]): Promise<GroqResult> {
   const apiKeys = getGroqApiKeys();
 
   if (apiKeys.length === 0) {
@@ -143,11 +130,7 @@ export async function callGroq(
       timeout: GROQ_TIMEOUT_MS,
     });
 
-    for (
-      let attempt = 0;
-      attempt <= GROQ_MAX_RETRIES;
-      attempt += 1
-    ) {
+    for (let attempt = 0; attempt <= GROQ_MAX_RETRIES; attempt += 1) {
       try {
         const response = await groq.chat.completions.create({
           model: GROQ_MODEL,
@@ -202,9 +185,7 @@ export async function callGroq(
          * attempt 1 -> wait 1 second
          * attempt 2 -> wait 2 seconds
          */
-        await sleep(
-          GROQ_RETRY_DELAY_MS * (attempt + 1),
-        );
+        await sleep(GROQ_RETRY_DELAY_MS * (attempt + 1));
       }
     }
   }

@@ -28,9 +28,7 @@ const BLOCKED_WORDS = [
   "orgasm",
 ];
 
-export function validateUserContent(
-  value: string,
-): string | null {
+export function validateUserContent(value: string): string | null {
   const normalized = value
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, " ")
@@ -43,11 +41,7 @@ export function validateUserContent(
 
   const words = normalized.split(" ");
 
-  if (
-    words.some((word) =>
-      BLOCKED_WORDS.includes(word),
-    )
-  ) {
+  if (words.some((word) => BLOCKED_WORDS.includes(word))) {
     return "Please avoid abusive or explicit language.";
   }
 

@@ -1,14 +1,10 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  serverExternalPackages: [
-    "swisseph-wasm",
-  ],
+  serverExternalPackages: ["swisseph-wasm"],
 
   outputFileTracingIncludes: {
-    "/api/chat": [
-      "./node_modules/swisseph-wasm/wasm/**/*",
-    ],
+    "/api/chat": ["./node_modules/swisseph-wasm/wasm/**/*"],
   },
 };
 

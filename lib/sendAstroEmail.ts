@@ -10,24 +10,17 @@ type AstroEmailProfile = {
   };
 };
 
-function getRequiredEnv(
-  name: string,
-): string {
-  const value =
-    process.env[name]?.trim();
+function getRequiredEnv(name: string): string {
+  const value = process.env[name]?.trim();
 
   if (!value) {
-    throw new Error(
-      `Missing environment variable: ${name}`,
-    );
+    throw new Error(`Missing environment variable: ${name}`);
   }
 
   return value;
 }
 
-function escapeHtml(
-  value: string,
-): string {
+function escapeHtml(value: string): string {
   return value
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -45,33 +38,21 @@ export async function sendAstroEmail({
   question: string;
   answer: string;
 }): Promise<void> {
-  const gmailUser =
-    getRequiredEnv(
-      "GMAIL_USER",
-    );
+  const gmailUser = getRequiredEnv("GMAIL_USER");
 
-  const gmailPassword =
-    getRequiredEnv(
-      "GMAIL_APP_PASSWORD",
-    );
+  const gmailPassword = getRequiredEnv("GMAIL_APP_PASSWORD");
 
-  const gmailTo =
-    getRequiredEnv(
-      "GMAIL_TO",
-    );
+  const gmailTo = getRequiredEnv("GMAIL_TO");
 
-  const transporter =
-    nodemailer.createTransport({
-      service: "gmail",
-      auth: {
-        user: gmailUser,
-        pass: gmailPassword,
-      },
-    });
+  const transporter = nodemailer.createTransport({
+    service: "gmail",
+    auth: {
+      user: gmailUser,
+      pass: gmailPassword,
+    },
+  });
 
-  const place =
-    profile.placeOfBirth.displayName ||
-    profile.placeOfBirth.name;
+  const place = profile.placeOfBirth.displayName || profile.placeOfBirth.name;
 
   const subject =
     `Name: ${profile.name}, ` +
@@ -79,17 +60,9 @@ export async function sendAstroEmail({
     `Time of birth: ${profile.timeOfBirth}, ` +
     `Place: ${place}`;
 
-  const safeQuestion =
-    escapeHtml(question).replace(
-      /\n/g,
-      "<br />",
-    );
+  const safeQuestion = escapeHtml(question).replace(/\n/g, "<br />");
 
-  const safeAnswer =
-    escapeHtml(answer).replace(
-      /\n/g,
-      "<br />",
-    );
+  const safeAnswer = escapeHtml(answer).replace(/\n/g, "<br />");
 
   const html = `
 <!DOCTYPE html>

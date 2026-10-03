@@ -17,36 +17,28 @@ function getPositiveIntEnv(
 
   const value = Number(raw);
 
-  if (
-    !Number.isInteger(value) ||
-    value < min ||
-    value > max
-  ) {
+  if (!Number.isInteger(value) || value < min || value > max) {
     return fallback;
   }
 
   return value;
 }
 
-const SESSION_TTL_SECONDS =
-  getPositiveIntEnv(
-    "SESSION_TTL_SECONDS",
-    86400,
-    300,
-    60 * 60 * 24 * 30,
-  );
+const SESSION_TTL_SECONDS = getPositiveIntEnv(
+  "SESSION_TTL_SECONDS",
+  86400,
+  300,
+  60 * 60 * 24 * 30,
+);
 
-const MAX_SESSION_MESSAGES =
-  getPositiveIntEnv(
-    "MAX_SESSION_MESSAGES",
-    100,
-    10,
-    500,
-  );
+const MAX_SESSION_MESSAGES = getPositiveIntEnv(
+  "MAX_SESSION_MESSAGES",
+  100,
+  10,
+  500,
+);
 
-export type SessionMessageRole =
-  | "user"
-  | "assistant";
+export type SessionMessageRole = "user" | "assistant";
 
 export type AstroSessionMessage = {
   role: SessionMessageRole;
@@ -83,9 +75,7 @@ export type AstroSession = {
   updatedAt: string;
 };
 
-function getSessionKey(
-  sessionId: string,
-): string {
+function getSessionKey(sessionId: string): string {
   return `astro:session:${sessionId}`;
 }
 
@@ -97,35 +87,24 @@ function getNow(): string {
   return new Date().toISOString();
 }
 
-function normalizeSession(
-  session: AstroSession,
-): AstroSession {
+function normalizeSession(session: AstroSession): AstroSession {
   return {
     ...session,
 
-    messages: Array.isArray(
-      session.messages,
-    )
-      ? session.messages.slice(
-          -MAX_SESSION_MESSAGES,
-        )
+    messages: Array.isArray(session.messages)
+      ? session.messages.slice(-MAX_SESSION_MESSAGES)
       : [],
 
     conversationSummary:
-      typeof session.conversationSummary ===
-      "string"
+      typeof session.conversationSummary === "string"
         ? session.conversationSummary
         : "",
 
-    conversationSummaryMessageCount:
-      Number.isInteger(
-        session.conversationSummaryMessageCount,
-      )
-        ? Math.max(
-            0,
-            session.conversationSummaryMessageCount,
-          )
-        : 0,
+    conversationSummaryMessageCount: Number.isInteger(
+      session.conversationSummaryMessageCount,
+    )
+      ? Math.max(0, session.conversationSummaryMessageCount)
+      : 0,
   };
 }
 
@@ -134,23 +113,18 @@ export async function createAstroSession(params: {
   chart: unknown;
   language: string;
 }): Promise<AstroSession> {
-  const id =
-    generateSessionId();
+  const id = generateSessionId();
 
-  const timestamp =
-    getNow();
+  const timestamp = getNow();
 
   const session: AstroSession = {
     id,
 
-    profile:
-      params.profile,
+    profile: params.profile,
 
-    chart:
-      params.chart,
+    chart: params.chart,
 
-    language:
-      params.language,
+    language: params.language,
 
     messages: [],
 
@@ -158,21 +132,14 @@ export async function createAstroSession(params: {
 
     conversationSummaryMessageCount: 0,
 
-    createdAt:
-      timestamp,
+    createdAt: timestamp,
 
-    updatedAt:
-      timestamp,
+    updatedAt: timestamp,
   };
 
-  await redis.set(
-    getSessionKey(id),
-    session,
-    {
-      ex:
-        SESSION_TTL_SECONDS,
-    },
-  );
+  await redis.set(getSessionKey(id), session, {
+    ex: SESSION_TTL_SECONDS,
+  });
 
   return session;
 }
@@ -180,51 +147,33 @@ export async function createAstroSession(params: {
 export async function getAstroSession(
   sessionId: string,
 ): Promise<AstroSession | null> {
-  if (
-    typeof sessionId !==
-      "string" ||
-    !sessionId.trim()
-  ) {
+  if (typeof sessionId !== "string" || !sessionId.trim()) {
     return null;
   }
 
-  const session =
-    await redis.get<AstroSession>(
-      getSessionKey(
-        sessionId.trim(),
-      ),
-    );
+  const session = await redis.get<AstroSession>(
+    getSessionKey(sessionId.trim()),
+  );
 
   if (!session) {
     return null;
   }
 
-  return normalizeSession(
-    session,
-  );
+  return normalizeSession(session);
 }
 
 export async function saveAstroSession(
   session: AstroSession,
 ): Promise<AstroSession> {
-  const normalized =
-    normalizeSession({
-      ...session,
+  const normalized = normalizeSession({
+    ...session,
 
-      updatedAt:
-        getNow(),
-    });
+    updatedAt: getNow(),
+  });
 
-  await redis.set(
-    getSessionKey(
-      normalized.id,
-    ),
-    normalized,
-    {
-      ex:
-        SESSION_TTL_SECONDS,
-    },
-  );
+  await redis.set(getSessionKey(normalized.id), normalized, {
+    ex: SESSION_TTL_SECONDS,
+  });
 
   return normalized;
 }
@@ -236,8 +185,7 @@ export async function addAstroSessionMessage(
     content: string;
   },
 ): Promise<AstroSession> {
-  const content =
-    message.content.trim();
+  const content = message.content.trim();
 
   if (!content) {
     return session;
@@ -250,25 +198,18 @@ export async function addAstroSessionMessage(
       ...session.messages,
 
       {
-        role:
-          message.role,
+        role: message.role,
 
         content,
 
-        createdAt:
-          getNow(),
+        createdAt: getNow(),
       },
-    ].slice(
-      -MAX_SESSION_MESSAGES,
-    ),
+    ].slice(-MAX_SESSION_MESSAGES),
 
-    updatedAt:
-      getNow(),
+    updatedAt: getNow(),
   };
 
-  return saveAstroSession(
-    updated,
-  );
+  return saveAstroSession(updated);
 }
 
 export async function updateAstroSessionMemory(
@@ -282,41 +223,31 @@ export async function updateAstroSessionMemory(
   const updated: AstroSession = {
     ...session,
 
-    ...(typeof params.conversationSummary ===
-    "string"
+    ...(typeof params.conversationSummary === "string"
       ? {
-          conversationSummary:
-            params.conversationSummary,
+          conversationSummary: params.conversationSummary,
         }
       : {}),
 
-    ...(Number.isInteger(
-      params.conversationSummaryMessageCount,
-    )
+    ...(Number.isInteger(params.conversationSummaryMessageCount)
       ? {
-          conversationSummaryMessageCount:
-            Math.max(
-              0,
-              params.conversationSummaryMessageCount!,
-            ),
+          conversationSummaryMessageCount: Math.max(
+            0,
+            params.conversationSummaryMessageCount!,
+          ),
         }
       : {}),
 
-    ...(typeof params.language ===
-    "string"
+    ...(typeof params.language === "string"
       ? {
-          language:
-            params.language,
+          language: params.language,
         }
       : {}),
 
-    updatedAt:
-      getNow(),
+    updatedAt: getNow(),
   };
 
-  return saveAstroSession(
-    updated,
-  );
+  return saveAstroSession(updated);
 }
 
 export async function updateAstroSessionChart(
@@ -328,23 +259,14 @@ export async function updateAstroSessionChart(
 
     chart,
 
-    updatedAt:
-      getNow(),
+    updatedAt: getNow(),
   });
 }
 
-export async function deleteAstroSession(
-  sessionId: string,
-): Promise<void> {
-  if (
-    !sessionId.trim()
-  ) {
+export async function deleteAstroSession(sessionId: string): Promise<void> {
+  if (!sessionId.trim()) {
     return;
   }
 
-  await redis.del(
-    getSessionKey(
-      sessionId.trim(),
-    ),
-  );
+  await redis.del(getSessionKey(sessionId.trim()));
 }

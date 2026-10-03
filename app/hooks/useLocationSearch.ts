@@ -1,15 +1,7 @@
 "use client";
 
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
-import type {
-  BirthLocation,
-  LocationSuggestion,
-} from "@/lib/astro-ui";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { BirthLocation, LocationSuggestion } from "@/lib/astro-ui";
 import {
   extractLocationSuggestions,
   getTimezoneFromCoordinates,
@@ -38,56 +30,41 @@ export function useLocationSearch({
   onInteraction,
 }: Options) {
   const [locationText, setLocationText] = useState("");
-  const [suggestions, setSuggestions] = useState<
-    LocationSuggestion[]
-  >([]);
-  const [locationLoading, setLocationLoading] =
-    useState(false);
-  const [locationError, setLocationError] = useState<
-    string | null
-  >(null);
+  const [suggestions, setSuggestions] = useState<LocationSuggestion[]>([]);
+  const [locationLoading, setLocationLoading] = useState(false);
+  const [locationError, setLocationError] = useState<string | null>(null);
   const [locationPopupPosition, setLocationPopupPosition] =
     useState<LocationPopupPosition | null>(null);
 
-  const locationInputRef =
-    useRef<HTMLInputElement | null>(null);
+  const locationInputRef = useRef<HTMLInputElement | null>(null);
 
-  const locationAbortRef =
-    useRef<AbortController | null>(null);
+  const locationAbortRef = useRef<AbortController | null>(null);
 
   /*
    * Once the user selects a location, suppress location searching
    * until the user explicitly edits the field again.
    */
-  const locationSearchSuppressedRef =
-    useRef(false);
+  const locationSearchSuppressedRef = useRef(false);
 
-  const locationValue =
-    locationText ||
-    profile.placeOfBirth?.displayName ||
-    "";
+  const locationValue = locationText || profile.placeOfBirth?.displayName || "";
 
-  const locationSelected =
-    profile.placeOfBirth !== null;
+  const locationSelected = profile.placeOfBirth !== null;
 
-  const updateLocationPopupPosition =
-    useCallback((): void => {
-      const inputElement =
-        locationInputRef.current;
+  const updateLocationPopupPosition = useCallback((): void => {
+    const inputElement = locationInputRef.current;
 
-      if (!inputElement) {
-        return;
-      }
+    if (!inputElement) {
+      return;
+    }
 
-      const rect =
-        inputElement.getBoundingClientRect();
+    const rect = inputElement.getBoundingClientRect();
 
-      setLocationPopupPosition({
-        top: rect.bottom + 8,
-        left: rect.left,
-        width: rect.width,
-      });
-    }, []);
+    setLocationPopupPosition({
+      top: rect.bottom + 8,
+      left: rect.left,
+      width: rect.width,
+    });
+  }, []);
 
   /*
    * Location search
@@ -113,110 +90,81 @@ export function useLocationSearch({
       return;
     }
 
-    const controller =
-      new AbortController();
+    const controller = new AbortController();
 
-    locationAbortRef.current =
-      controller;
+    locationAbortRef.current = controller;
 
-    const timeoutId =
-      window.setTimeout(async () => {
-        if (
-          locationSearchSuppressedRef.current ||
-          controller.signal.aborted
-        ) {
+    const timeoutId = window.setTimeout(async () => {
+      if (locationSearchSuppressedRef.current || controller.signal.aborted) {
+        return;
+      }
+
+      try {
+        const response = await fetch(
+          `/api/location/search?q=${encodeURIComponent(query)}`,
+          {
+            method: "GET",
+            headers: {
+              Accept: "application/json",
+            },
+            signal: controller.signal,
+          },
+        );
+
+        if (controller.signal.aborted || locationSearchSuppressedRef.current) {
           return;
         }
 
-        try {
-          const response = await fetch(
-            `/api/location/search?q=${encodeURIComponent(query)}`,
-            {
-              method: "GET",
-              headers: {
-                Accept: "application/json",
-              },
-              signal: controller.signal,
-            },
-          );
-
-          if (
-            controller.signal.aborted ||
-            locationSearchSuppressedRef.current
-          ) {
-            return;
-          }
-
-          if (!response.ok) {
-            setSuggestions([]);
-            setLocationLoading(false);
-            setLocationPopupPosition(null);
-            return;
-          }
-
-          const payload: unknown =
-            await response.json();
-
-          if (
-            controller.signal.aborted ||
-            locationSearchSuppressedRef.current
-          ) {
-            return;
-          }
-
-          const normalized =
-            extractLocationSuggestions(
-              payload,
-            );
-
-          setSuggestions(normalized);
-          setLocationLoading(false);
-
-          if (normalized.length > 0) {
-            updateLocationPopupPosition();
-          } else {
-            setLocationPopupPosition(null);
-          }
-        } catch (error: unknown) {
-          if (
-            error instanceof DOMException &&
-            error.name === "AbortError"
-          ) {
-            return;
-          }
-
-          if (controller.signal.aborted) {
-            return;
-          }
-
-          console.error(
-            "Location search failed:",
-            error,
-          );
-
+        if (!response.ok) {
           setSuggestions([]);
           setLocationLoading(false);
           setLocationPopupPosition(null);
+          return;
         }
-      }, 450);
+
+        const payload: unknown = await response.json();
+
+        if (controller.signal.aborted || locationSearchSuppressedRef.current) {
+          return;
+        }
+
+        const normalized = extractLocationSuggestions(payload);
+
+        setSuggestions(normalized);
+        setLocationLoading(false);
+
+        if (normalized.length > 0) {
+          updateLocationPopupPosition();
+        } else {
+          setLocationPopupPosition(null);
+        }
+      } catch (error: unknown) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return;
+        }
+
+        if (controller.signal.aborted) {
+          return;
+        }
+
+        console.error("Location search failed:", error);
+
+        setSuggestions([]);
+        setLocationLoading(false);
+        setLocationPopupPosition(null);
+      }
+    }, 450);
 
     return () => {
       window.clearTimeout(timeoutId);
 
       controller.abort();
 
-      if (
-        locationAbortRef.current ===
-        controller
-      ) {
+      if (locationAbortRef.current === controller) {
         locationAbortRef.current = null;
       }
     };
-  }, [
-    locationText,
-    profile.placeOfBirth,
-    updateLocationPopupPosition,
-  ]);
+  }, [locationText, profile.placeOfBirth, updateLocationPopupPosition]);
 
   /*
    * Keep location dropdown positioned correctly.
@@ -226,38 +174,20 @@ export function useLocationSearch({
       return;
     }
 
-    const handleViewportChange =
-      (): void => {
-        updateLocationPopupPosition();
-      };
+    const handleViewportChange = (): void => {
+      updateLocationPopupPosition();
+    };
 
-    window.addEventListener(
-      "resize",
-      handleViewportChange,
-    );
+    window.addEventListener("resize", handleViewportChange);
 
-    window.addEventListener(
-      "scroll",
-      handleViewportChange,
-      true,
-    );
+    window.addEventListener("scroll", handleViewportChange, true);
 
     return () => {
-      window.removeEventListener(
-        "resize",
-        handleViewportChange,
-      );
+      window.removeEventListener("resize", handleViewportChange);
 
-      window.removeEventListener(
-        "scroll",
-        handleViewportChange,
-        true,
-      );
+      window.removeEventListener("scroll", handleViewportChange, true);
     };
-  }, [
-    suggestions.length,
-    updateLocationPopupPosition,
-  ]);
+  }, [suggestions.length, updateLocationPopupPosition]);
 
   /*
    * Cleanup location request on unmount.
@@ -271,13 +201,10 @@ export function useLocationSearch({
   /*
    * Location typing.
    */
-  function handleLocationChange(
-    value: string,
-  ): void {
+  function handleLocationChange(value: string): void {
     // Manual typing means the user intentionally
     // wants to search again.
-    locationSearchSuppressedRef.current =
-      false;
+    locationSearchSuppressedRef.current = false;
 
     locationAbortRef.current?.abort();
     locationAbortRef.current = null;
@@ -294,10 +221,7 @@ export function useLocationSearch({
      * invalidates the old selection.
      */
     if (profile.placeOfBirth !== null) {
-      updateProfile(
-        "placeOfBirth",
-        null,
-      );
+      updateProfile("placeOfBirth", null);
     }
 
     if (value.trim().length >= 2) {
@@ -320,13 +244,10 @@ export function useLocationSearch({
    * tz-lookup calculates the timezone locally
    * from latitude + longitude.
    */
-  async function selectLocation(
-    suggestion: LocationSuggestion,
-  ): Promise<void> {
+  async function selectLocation(suggestion: LocationSuggestion): Promise<void> {
     // Immediately suppress any pending/new
     // search triggered by this selection.
-    locationSearchSuppressedRef.current =
-      true;
+    locationSearchSuppressedRef.current = true;
 
     locationAbortRef.current?.abort();
     locationAbortRef.current = null;
@@ -347,17 +268,15 @@ export function useLocationSearch({
        * London coordinates -> Europe/London
        * New York coordinates -> America/New_York
        */
-      const timezone =
-        getTimezoneFromCoordinates(
-          suggestion.latitude,
-          suggestion.longitude,
-        );
+      const timezone = getTimezoneFromCoordinates(
+        suggestion.latitude,
+        suggestion.longitude,
+      );
 
       const selected: BirthLocation = {
         placeId: suggestion.placeId,
         name: suggestion.name,
-        displayName:
-          suggestion.displayName,
+        displayName: suggestion.displayName,
         latitude: suggestion.latitude,
         longitude: suggestion.longitude,
         timezone,
@@ -368,10 +287,7 @@ export function useLocationSearch({
        * Makes the location a valid selected
        * BirthLocation for chat validation.
        */
-      updateProfile(
-        "placeOfBirth",
-        selected,
-      );
+      updateProfile("placeOfBirth", selected);
 
       /*
        * Clear only the temporary search text.
@@ -386,18 +302,13 @@ export function useLocationSearch({
 
       onInteraction();
     } catch (error: unknown) {
-      console.error(
-        "selectLocation failed:",
-        error,
-      );
+      console.error("selectLocation failed:", error);
 
       /*
        * Keep the chosen suggestion visible
        * without triggering another search.
        */
-      setLocationText(
-        suggestion.displayName,
-      );
+      setLocationText(suggestion.displayName);
 
       setSuggestions([]);
       setLocationPopupPosition(null);

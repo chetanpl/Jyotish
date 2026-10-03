@@ -39,7 +39,6 @@ export type ChatResponse = {
   error?: string;
 };
 
-
 export type LocationSearchResponse = {
   suggestions?: LocationSuggestion[];
 };
@@ -153,8 +152,7 @@ export type UiText = {
   };
 };
 
-export const STORAGE_KEY =
-  "astroai_birth_profile_v1";
+export const STORAGE_KEY = "astroai_birth_profile_v1";
 
 export const EMPTY_PROFILE: BirthProfile = {
   name: "",
@@ -164,62 +162,33 @@ export const EMPTY_PROFILE: BirthProfile = {
   placeOfBirth: null,
 };
 
-export function isAnswerLanguage(
-  value: string,
-): value is AnswerLanguage {
-  return (
-    value === "en" ||
-    value === "hi"
-  );
+export function isAnswerLanguage(value: string): value is AnswerLanguage {
+  return value === "en" || value === "hi";
 }
 
-export function isMeridiem(
-  value: string,
-): value is Meridiem {
-  return (
-    value === "AM" ||
-    value === "PM"
-  );
+export function isMeridiem(value: string): value is Meridiem {
+  return value === "AM" || value === "PM";
 }
 
-export function isBirthLocation(
-  value: unknown,
-): value is BirthLocation {
-  if (
-    typeof value !== "object" ||
-    value === null
-  ) {
+export function isBirthLocation(value: unknown): value is BirthLocation {
+  if (typeof value !== "object" || value === null) {
     return false;
   }
 
-  const location =
-    value as Record<string, unknown>;
+  const location = value as Record<string, unknown>;
 
   return (
-    typeof location.placeId ===
-      "string" &&
-    typeof location.name ===
-      "string" &&
-    typeof location.displayName ===
-      "string" &&
-    typeof location.latitude ===
-      "number" &&
-    Number.isFinite(
-      location.latitude,
-    ) &&
-    typeof location.longitude ===
-      "number" &&
-    Number.isFinite(
-      location.longitude,
-    ) &&
-    typeof location.timezone ===
-      "string" &&
-    location.timezone.trim()
-      .length > 0 &&
-    typeof location.timezoneId ===
-      "string" &&
-    location.timezoneId.trim()
-      .length > 0
+    typeof location.placeId === "string" &&
+    typeof location.name === "string" &&
+    typeof location.displayName === "string" &&
+    typeof location.latitude === "number" &&
+    Number.isFinite(location.latitude) &&
+    typeof location.longitude === "number" &&
+    Number.isFinite(location.longitude) &&
+    typeof location.timezone === "string" &&
+    location.timezone.trim().length > 0 &&
+    typeof location.timezoneId === "string" &&
+    location.timezoneId.trim().length > 0
   );
 }
 
@@ -227,53 +196,35 @@ export function validateChatRequest(
   profile: BirthProfile,
   question: string,
 ): ValidationKey | null {
-  if (
-    question.trim().length === 0
-  ) {
+  if (question.trim().length === 0) {
     return "questionRequired";
   }
 
-  if (
-    profile.name.trim().length ===
-    0
-  ) {
+  if (profile.name.trim().length === 0) {
     return "nameRequired";
   }
 
-  if (
-    profile.dateOfBirth.length ===
-    0
-  ) {
+  if (profile.dateOfBirth.length === 0) {
     return "dateRequired";
   }
 
-  if (
-    profile.timeOfBirth.length ===
-    0
-  ) {
+  if (profile.timeOfBirth.length === 0) {
     return "timeRequired";
   }
 
-  if (
-    profile.placeOfBirth === null
-  ) {
+  if (profile.placeOfBirth === null) {
     return "locationRequired";
   }
 
   return null;
 }
 
-export function formatTime12Hour(
-  time: string,
-): {
+export function formatTime12Hour(time: string): {
   hour: string;
   minute: string;
   period: Meridiem;
 } {
-  const match =
-    /^(\d{2}):(\d{2})$/.exec(
-      time,
-    );
+  const match = /^(\d{2}):(\d{2})$/.exec(time);
 
   if (!match) {
     return {
@@ -283,21 +234,15 @@ export function formatTime12Hour(
     };
   }
 
-  const hour24 =
-    Number(match[1]);
+  const hour24 = Number(match[1]);
 
-  const minute =
-    Number(match[2]);
+  const minute = Number(match[2]);
 
   if (
-    !Number.isInteger(
-      hour24,
-    ) ||
+    !Number.isInteger(hour24) ||
     hour24 < 0 ||
     hour24 > 23 ||
-    !Number.isInteger(
-      minute,
-    ) ||
+    !Number.isInteger(minute) ||
     minute < 0 ||
     minute > 59
   ) {
@@ -308,24 +253,14 @@ export function formatTime12Hour(
     };
   }
 
-  const period: Meridiem =
-    hour24 >= 12
-      ? "PM"
-      : "AM";
+  const period: Meridiem = hour24 >= 12 ? "PM" : "AM";
 
-  const hour12 =
-    hour24 % 12 === 0
-      ? 12
-      : hour24 % 12;
+  const hour12 = hour24 % 12 === 0 ? 12 : hour24 % 12;
 
   return {
-    hour: String(
-      hour12,
-    ).padStart(2, "0"),
+    hour: String(hour12).padStart(2, "0"),
 
-    minute: String(
-      minute,
-    ).padStart(2, "0"),
+    minute: String(minute).padStart(2, "0"),
 
     period,
   };
@@ -336,483 +271,341 @@ export function setTimeFrom12Hour(
   minute: string,
   period: Meridiem,
 ): string {
-  const parsedHour =
-    Number(hour);
+  const parsedHour = Number(hour);
 
-  const parsedMinute =
-    Number(minute);
+  const parsedMinute = Number(minute);
 
-  if (
-    !Number.isInteger(
-      parsedHour,
-    ) ||
-    parsedHour < 1 ||
-    parsedHour > 12
-  ) {
+  if (!Number.isInteger(parsedHour) || parsedHour < 1 || parsedHour > 12) {
     return "00:00";
   }
 
   if (
-    !Number.isInteger(
-      parsedMinute,
-    ) ||
+    !Number.isInteger(parsedMinute) ||
     parsedMinute < 0 ||
     parsedMinute > 59
   ) {
     return "00:00";
   }
 
-  let hour24 =
-    parsedHour % 12;
+  let hour24 = parsedHour % 12;
 
-  if (
-    period === "PM"
-  ) {
+  if (period === "PM") {
     hour24 += 12;
   }
 
-  return `${String(
-    hour24,
-  ).padStart(
-    2,
-    "0",
-  )}:${String(
-    parsedMinute,
-  ).padStart(
+  return `${String(hour24).padStart(2, "0")}:${String(parsedMinute).padStart(
     2,
     "0",
   )}`;
 }
 
-const ENGLISH_TEXT: UiText =
-  {
-    header: {
-      subtitle:
-        "Vedic Astrology Guidance",
+const ENGLISH_TEXT: UiText = {
+  header: {
+    subtitle: "Vedic Astrology Guidance",
 
-      metaTitle:
-        "Astrology · Reflection",
+    metaTitle: "Astrology · Reflection",
 
-      metaDescription:
-        "Traditional wisdom, thoughtfully presented",
-    },
+    metaDescription: "Traditional wisdom, thoughtfully presented",
+  },
 
-    hero: {
-      badge:
-        "Peace · Auspiciousness",
+  hero: {
+    badge: "Peace · Auspiciousness",
 
-      titlePrefix:
-        "Discover insights from your",
+    titlePrefix: "Discover insights from your",
 
-      titleAccent:
-        "birth chart",
+    titleAccent: "birth chart",
 
-      titleSuffix: "",
+    titleSuffix: "",
 
-      description:
-        "Enter your birth details and ask AstroAI about your personality, relationships, career, timing, strengths, challenges, and life patterns.",
-    },
+    description:
+      "Enter your birth details and ask AstroAI about your personality, relationships, career, timing, strengths, challenges, and life patterns.",
+  },
 
-    profile: {
-      eyebrow:
-        "Birth profile",
+  profile: {
+    eyebrow: "Birth profile",
 
-      title:
-        "Your details",
+    title: "Your details",
 
-      hide:
-        "Hide",
+    hide: "Hide",
 
-      show:
-        "Show",
+    show: "Show",
 
-      name:
-        "Name",
+    name: "Name",
 
-      namePlaceholder:
-        "Enter your name",
+    namePlaceholder: "Enter your name",
 
-      gender:
-        "Gender",
+    gender: "Gender",
 
-      genderPlaceholder:
-        "Select gender",
+    genderPlaceholder: "Select gender",
 
-      male:
-        "Male",
+    male: "Male",
 
-      female:
-        "Female",
+    female: "Female",
 
-      other:
-        "Other",
+    other: "Other",
 
-      dateOfBirth:
-        "Date of birth",
+    dateOfBirth: "Date of birth",
 
-      timeOfBirth:
-        "Time of birth",
+    timeOfBirth: "Time of birth",
 
-      hour:
-        "Hour",
+    hour: "Hour",
 
-      minute:
-        "Minute",
+    minute: "Minute",
 
-      period:
-        "AM or PM",
+    period: "AM or PM",
 
-      am:
-        "AM",
+    am: "AM",
 
-      pm:
-        "PM",
+    pm: "PM",
 
-      timeHelper:
-        "Select your local birth time in 12-hour format.",
+    timeHelper: "Select your local birth time in 12-hour format.",
 
-      placeOfBirth:
-        "Place of birth",
+    placeOfBirth: "Place of birth",
 
-      placePlaceholder:
-        "Search city or place",
+    placePlaceholder: "Search city or place",
 
-      placeHelper:
-        "Search and select your exact birthplace for accurate chart calculation.",
+    placeHelper:
+      "Search and select your exact birthplace for accurate chart calculation.",
 
-      selectedTitle:
-        "Birthplace selected",
+    selectedTitle: "Birthplace selected",
 
-      latitude:
-        "Latitude",
+    latitude: "Latitude",
 
-      longitude:
-        "Longitude",
+    longitude: "Longitude",
 
-      timezone:
-        "Timezone",
+    timezone: "Timezone",
 
-      timezoneFallback:
-        "UTC",
-    },
+    timezoneFallback: "UTC",
+  },
 
-    chat: {
-      title:
-        "Astrology AI",
+  chat: {
+    title: "Astrology AI",
 
-      subtitle:
-        "Ask questions about your birth chart",
+    subtitle: "Ask questions about your birth chart",
 
-      welcomeTitle:
-        "Welcome to Pal Jyotish",
+    welcomeTitle: "Welcome to Pal Jyotish",
 
-      welcomeDescription:
-        "Ask about your personality, career, relationships, marriage, finances, timing, or any other area of your life.",
+    welcomeDescription:
+      "Ask about your personality, career, relationships, marriage, finances, timing, or any other area of your life.",
 
-      quickQuestions: [
-        "What are my strengths?",
-        "Tell me about my career",
-        "What does my Moon sign mean?",
-        "What about relationships?",
-      ],
+    quickQuestions: [
+      "What are my strengths?",
+      "Tell me about my career",
+      "What does my Moon sign mean?",
+      "What about relationships?",
+    ],
 
-      thinkingTitle:
-        "Reading your birth chart...",
+    thinkingTitle: "Reading your birth chart...",
 
-      thinkingSubtitle:
-        "Please wait a moment",
+    thinkingSubtitle: "Please wait a moment",
 
-      answerLanguage:
-        "Answer language",
+    answerLanguage: "Answer language",
 
-      answerLanguageHelper:
-        "Choose how AstroAI should respond",
+    answerLanguageHelper: "Choose how AstroAI should respond",
 
-      english:
-        "English",
+    english: "English",
 
-      hindi:
-        "Hindi",
+    hindi: "Hindi",
 
-      placeholder:
-        "Ask anything about your birth chart...",
+    placeholder: "Ask anything about your birth chart...",
 
-      send:
-        "Send message",
+    send: "Send message",
 
-      keyboardHint:
-        "Press Enter to send · Shift + Enter for a new line",
+    keyboardHint: "Press Enter to send · Shift + Enter for a new line",
 
-      footerOm:
-        "Om Shanti",
-    },
+    footerOm: "Om Shanti",
+  },
 
-    validation: {
-      questionRequired:
-        "Please enter a question.",
+  validation: {
+    questionRequired: "Please enter a question.",
 
-      nameRequired:
-        "Please enter your name first.",
+    nameRequired: "Please enter your name first.",
 
-      dateRequired:
-        "Please select your date of birth.",
+    dateRequired: "Please select your date of birth.",
 
-      timeRequired:
-        "Please select your time of birth.",
+    timeRequired: "Please select your time of birth.",
 
-      locationRequired:
-        "Please select your exact birthplace.",
-    },
+    locationRequired: "Please select your exact birthplace.",
+  },
 
-    errors: {
-      timezone:
-        "The timezone could not be determined.",
+  errors: {
+    timezone: "The timezone could not be determined.",
 
-      chat:
-        "Unable to get an astrology response.",
+    chat: "Unable to get an astrology response.",
 
-      generic:
-        "Something went wrong. Please try again.",
+    generic: "Something went wrong. Please try again.",
 
-      emptyAnswer:
-        "I could not generate a response.",
-    },
+    emptyAnswer: "I could not generate a response.",
+  },
 
-    footer: {
-      description:
-        "Vedic astrology guidance for reflection and insight.",
+  footer: {
+    description: "Vedic astrology guidance for reflection and insight.",
 
-      disclaimer:
-        "AstroAI provides Vedic astrology interpretations for informational and entertainment purposes only. Astrology is not guaranteed and should not be considered professional medical, legal, financial, or other professional advice.",
+    disclaimer:
+      "AstroAI provides Vedic astrology interpretations for informational and entertainment purposes only. Astrology is not guaranteed and should not be considered professional medical, legal, financial, or other professional advice.",
 
-      right:
-        "For guidance and self-reflection, not guaranteed predictions.",
+    right: "For guidance and self-reflection, not guaranteed predictions.",
 
-      poweredBy:
-        "Powered by InfoWithPal",
-    },
-  };
+    poweredBy: "Powered by InfoWithPal",
+  },
+};
 
-const HINDI_TEXT: UiText =
-  {
-    header: {
-      subtitle:
-        "वैदिक ज्योतिष मार्गदर्शन",
+const HINDI_TEXT: UiText = {
+  header: {
+    subtitle: "वैदिक ज्योतिष मार्गदर्शन",
 
-      metaTitle:
-        "ज्योतिष · आत्मचिंतन",
+    metaTitle: "ज्योतिष · आत्मचिंतन",
 
-      metaDescription:
-        "पारंपरिक ज्ञान को सरल रूप में समझें",
-    },
+    metaDescription: "पारंपरिक ज्ञान को सरल रूप में समझें",
+  },
 
-    hero: {
-      badge:
-        "शान्तिः · शुभं भवतु",
+  hero: {
+    badge: "शान्तिः · शुभं भवतु",
 
-      titlePrefix:
-        "अपनी",
+    titlePrefix: "अपनी",
 
-      titleAccent:
-        "जन्म कुंडली",
+    titleAccent: "जन्म कुंडली",
 
-      titleSuffix:
-        "से जीवन के संकेत जानें",
+    titleSuffix: "से जीवन के संकेत जानें",
 
-      description:
-        "अपनी जन्म जानकारी दर्ज करें और AstroAI से व्यक्तित्व, रिश्ते, करियर, समय, शक्तियों, चुनौतियों और जीवन के विभिन्न पहलुओं के बारे में प्रश्न पूछें।",
-    },
+    description:
+      "अपनी जन्म जानकारी दर्ज करें और AstroAI से व्यक्तित्व, रिश्ते, करियर, समय, शक्तियों, चुनौतियों और जीवन के विभिन्न पहलुओं के बारे में प्रश्न पूछें।",
+  },
 
-    profile: {
-      eyebrow:
-        "जन्म विवरण",
+  profile: {
+    eyebrow: "जन्म विवरण",
 
-      title:
-        "आपकी जानकारी",
+    title: "आपकी जानकारी",
 
-      hide:
-        "छिपाएँ",
+    hide: "छिपाएँ",
 
-      show:
-        "दिखाएँ",
+    show: "दिखाएँ",
 
-      name:
-        "नाम",
+    name: "नाम",
 
-      namePlaceholder:
-        "अपना नाम लिखें",
+    namePlaceholder: "अपना नाम लिखें",
 
-      gender:
-        "लिंग",
+    gender: "लिंग",
 
-      genderPlaceholder:
-        "लिंग चुनें",
+    genderPlaceholder: "लिंग चुनें",
 
-      male:
-        "पुरुष",
+    male: "पुरुष",
 
-      female:
-        "महिला",
+    female: "महिला",
 
-      other:
-        "अन्य",
+    other: "अन्य",
 
-      dateOfBirth:
-        "जन्म तारीख",
+    dateOfBirth: "जन्म तारीख",
 
-      timeOfBirth:
-        "जन्म का समय",
+    timeOfBirth: "जन्म का समय",
 
-      hour:
-        "घंटा",
+    hour: "घंटा",
 
-      minute:
-        "मिनट",
+    minute: "मिनट",
 
-      period:
-        "पूर्वाह्न या अपराह्न",
+    period: "पूर्वाह्न या अपराह्न",
 
-      am:
-        "AM",
+    am: "AM",
 
-      pm:
-        "PM",
+    pm: "PM",
 
-      timeHelper:
-        "अपने स्थानीय जन्म समय के अनुसार 12 घंटे वाला समय चुनें।",
+    timeHelper: "अपने स्थानीय जन्म समय के अनुसार 12 घंटे वाला समय चुनें।",
 
-      placeOfBirth:
-        "जन्म स्थान",
+    placeOfBirth: "जन्म स्थान",
 
-      placePlaceholder:
-        "शहर या स्थान खोजें",
+    placePlaceholder: "शहर या स्थान खोजें",
 
-      placeHelper:
-        "सही जन्म स्थान चुनने से कुंडली की गणना अधिक सटीक होगी।",
+    placeHelper: "सही जन्म स्थान चुनने से कुंडली की गणना अधिक सटीक होगी।",
 
-      selectedTitle:
-        "जन्म स्थान चुना गया",
+    selectedTitle: "जन्म स्थान चुना गया",
 
-      latitude:
-        "अक्षांश",
+    latitude: "अक्षांश",
 
-      longitude:
-        "देशांतर",
+    longitude: "देशांतर",
 
-      timezone:
-        "समय क्षेत्र",
+    timezone: "समय क्षेत्र",
 
-      timezoneFallback:
-        "UTC",
-    },
+    timezoneFallback: "UTC",
+  },
 
-    chat: {
-      title:
-        "ज्योतिष AI",
+  chat: {
+    title: "ज्योतिष AI",
 
-      subtitle:
-        "अपनी जन्म कुंडली के बारे में प्रश्न पूछें",
+    subtitle: "अपनी जन्म कुंडली के बारे में प्रश्न पूछें",
 
-      welcomeTitle:
-        "पाल ज्योतिष AI में आपका स्वागत है",
+    welcomeTitle: "पाल ज्योतिष AI में आपका स्वागत है",
 
-      welcomeDescription:
-        "अपने व्यक्तित्व, करियर, रिश्तों, विवाह, धन, समय या जीवन के किसी भी पहलू के बारे में प्रश्न पूछें।",
+    welcomeDescription:
+      "अपने व्यक्तित्व, करियर, रिश्तों, विवाह, धन, समय या जीवन के किसी भी पहलू के बारे में प्रश्न पूछें।",
 
-      quickQuestions: [
-        "मेरी शक्तियाँ क्या हैं?",
-        "मेरे करियर के बारे में बताएं",
-        "मेरी चंद्र राशि का क्या अर्थ है?",
-        "मेरे रिश्तों के बारे में बताएं",
-      ],
+    quickQuestions: [
+      "मेरी शक्तियाँ क्या हैं?",
+      "मेरे करियर के बारे में बताएं",
+      "मेरी चंद्र राशि का क्या अर्थ है?",
+      "मेरे रिश्तों के बारे में बताएं",
+    ],
 
-      thinkingTitle:
-        "कुंडली का विश्लेषण हो रहा है...",
+    thinkingTitle: "कुंडली का विश्लेषण हो रहा है...",
 
-      thinkingSubtitle:
-        "कृपया कुछ क्षण प्रतीक्षा करें",
+    thinkingSubtitle: "कृपया कुछ क्षण प्रतीक्षा करें",
 
-      answerLanguage:
-        "उत्तर की भाषा",
+    answerLanguage: "उत्तर की भाषा",
 
-      answerLanguageHelper:
-        "AstroAI किस भाषा में उत्तर दे?",
+    answerLanguageHelper: "AstroAI किस भाषा में उत्तर दे?",
 
-      english:
-        "अंग्रेज़ी",
+    english: "अंग्रेज़ी",
 
-      hindi:
-        "हिन्दी",
+    hindi: "हिन्दी",
 
-      placeholder:
-        "अपना प्रश्न पूछें...",
+    placeholder: "अपना प्रश्न पूछें...",
 
-      send:
-        "संदेश भेजें",
+    send: "संदेश भेजें",
 
-      keyboardHint:
-        "Enter दबाएँ संदेश भेजने के लिए · Shift + Enter नई लाइन के लिए",
+    keyboardHint:
+      "Enter दबाएँ संदेश भेजने के लिए · Shift + Enter नई लाइन के लिए",
 
-      footerOm:
-        "ॐ शान्तिः",
-    },
+    footerOm: "ॐ शान्तिः",
+  },
 
-    validation: {
-      questionRequired:
-        "कृपया अपना प्रश्न लिखें।",
+  validation: {
+    questionRequired: "कृपया अपना प्रश्न लिखें।",
 
-      nameRequired:
-        "कृपया पहले अपना नाम लिखें।",
+    nameRequired: "कृपया पहले अपना नाम लिखें।",
 
-      dateRequired:
-        "कृपया अपनी जन्म तारीख चुनें।",
+    dateRequired: "कृपया अपनी जन्म तारीख चुनें।",
 
-      timeRequired:
-        "कृपया अपना जन्म समय चुनें।",
+    timeRequired: "कृपया अपना जन्म समय चुनें।",
 
-      locationRequired:
-        "कृपया अपना सही जन्म स्थान चुनें।",
-    },
+    locationRequired: "कृपया अपना सही जन्म स्थान चुनें।",
+  },
 
-    errors: {
-      timezone:
-        "समय क्षेत्र निर्धारित नहीं हो सका।",
+  errors: {
+    timezone: "समय क्षेत्र निर्धारित नहीं हो सका।",
 
-      chat:
-        "ज्योतिषीय उत्तर प्राप्त नहीं हो सका।",
+    chat: "ज्योतिषीय उत्तर प्राप्त नहीं हो सका।",
 
-      generic:
-        "कुछ गलत हो गया। कृपया दोबारा प्रयास करें।",
+    generic: "कुछ गलत हो गया। कृपया दोबारा प्रयास करें।",
 
-      emptyAnswer:
-        "उत्तर तैयार नहीं हो सका।",
-    },
+    emptyAnswer: "उत्तर तैयार नहीं हो सका।",
+  },
 
-    footer: {
-      description:
-        "आत्म-चिंतन और मार्गदर्शन के लिए वैदिक ज्योतिष की व्याख्या।",
+  footer: {
+    description: "आत्म-चिंतन और मार्गदर्शन के लिए वैदिक ज्योतिष की व्याख्या।",
 
-      disclaimer:
-        "AstroAI वैदिक ज्योतिष की व्याख्या केवल जानकारी और मनोरंजन के उद्देश्य से प्रदान करता है। ज्योतिष निश्चित भविष्यवाणी नहीं है और इसे चिकित्सा, कानूनी, वित्तीय या किसी अन्य पेशेवर सलाह के रूप में नहीं माना जाना चाहिए।",
+    disclaimer:
+      "AstroAI वैदिक ज्योतिष की व्याख्या केवल जानकारी और मनोरंजन के उद्देश्य से प्रदान करता है। ज्योतिष निश्चित भविष्यवाणी नहीं है और इसे चिकित्सा, कानूनी, वित्तीय या किसी अन्य पेशेवर सलाह के रूप में नहीं माना जाना चाहिए।",
 
-      right:
-        "मार्गदर्शन और आत्म-चिंतन के लिए, निश्चित भविष्यवाणी नहीं।",
+    right: "मार्गदर्शन और आत्म-चिंतन के लिए, निश्चित भविष्यवाणी नहीं।",
 
-      poweredBy:
-        "Powered by InfoWithPal",
-    },
-  };
+    poweredBy: "Powered by InfoWithPal",
+  },
+};
 
-export const UI_TEXT: Record<
-  AnswerLanguage,
-  UiText
-> = {
+export const UI_TEXT: Record<AnswerLanguage, UiText> = {
   en: ENGLISH_TEXT,
   hi: HINDI_TEXT,
 };
 
-export function getUiText(
-  language: AnswerLanguage,
-): UiText {
+export function getUiText(language: AnswerLanguage): UiText {
   return UI_TEXT[language];
 }

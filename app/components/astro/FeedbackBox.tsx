@@ -34,17 +34,11 @@ export default function FeedbackBox({
   answer,
   profile,
 }: FeedbackBoxProps) {
-  const [helpful, setHelpful] = useState<boolean | null>(
-    null,
-  );
+  const [helpful, setHelpful] = useState<boolean | null>(null);
 
-  const [rating, setRating] = useState<number | null>(
-    null,
-  );
+  const [rating, setRating] = useState<number | null>(null);
 
-  const [improvements, setImprovements] = useState<
-    string[]
-  >([]);
+  const [improvements, setImprovements] = useState<string[]>([]);
 
   const [comment, setComment] = useState("");
 
@@ -96,9 +90,7 @@ export default function FeedbackBox({
       const data = await response.json();
 
       if (!response.ok || !data.success) {
-        throw new Error(
-          data.error || "Failed to save feedback.",
-        );
+        throw new Error(data.error || "Failed to save feedback.");
       }
 
       setSubmitted(true);
@@ -106,9 +98,7 @@ export default function FeedbackBox({
       console.error("❌ FEEDBACK SUBMIT ERROR:", error);
 
       setError(
-        error instanceof Error
-          ? error.message
-          : "Unable to save feedback.",
+        error instanceof Error ? error.message : "Unable to save feedback.",
       );
     } finally {
       setSending(false);
@@ -118,9 +108,7 @@ export default function FeedbackBox({
   if (submitted) {
     return (
       <div className="astro-feedback astro-feedback-success">
-        <div className="astro-feedback-success-icon">
-          ✓
-        </div>
+        <div className="astro-feedback-success-icon">✓</div>
 
         <div>
           <div className="astro-feedback-success-title">
@@ -139,9 +127,7 @@ export default function FeedbackBox({
     <div className="astro-feedback">
       <div className="astro-feedback-header">
         <div>
-          <h4 className="astro-feedback-title">
-            How was this answer?
-          </h4>
+          <h4 className="astro-feedback-title">How was this answer?</h4>
 
           <p className="astro-feedback-subtitle">
             Your feedback helps us make AstroAI more useful.
@@ -153,40 +139,30 @@ export default function FeedbackBox({
         <button
           type="button"
           className={`astro-feedback-reaction ${
-            helpful === true
-              ? "astro-feedback-reaction-active"
-              : ""
+            helpful === true ? "astro-feedback-reaction-active" : ""
           }`}
           onClick={() => setHelpful(true)}
           aria-label="Helpful"
         >
-          <span className="astro-feedback-reaction-icon">
-            👍
-          </span>
+          <span className="astro-feedback-reaction-icon">👍</span>
           Helpful
         </button>
 
         <button
           type="button"
           className={`astro-feedback-reaction ${
-            helpful === false
-              ? "astro-feedback-reaction-active"
-              : ""
+            helpful === false ? "astro-feedback-reaction-active" : ""
           }`}
           onClick={() => setHelpful(false)}
           aria-label="Not helpful"
         >
-          <span className="astro-feedback-reaction-icon">
-            👎
-          </span>
+          <span className="astro-feedback-reaction-icon">👎</span>
           Not helpful
         </button>
       </div>
 
       <div className="astro-feedback-section">
-        <div className="astro-feedback-label">
-          Rate this answer
-        </div>
+        <div className="astro-feedback-label">Rate this answer</div>
 
         <div className="astro-feedback-stars">
           {[1, 2, 3, 4, 5].map((star) => (
@@ -199,9 +175,7 @@ export default function FeedbackBox({
                   : ""
               }`}
               onClick={() => setRating(star)}
-              aria-label={`${star} star${
-                star > 1 ? "s" : ""
-              }`}
+              aria-label={`${star} star${star > 1 ? "s" : ""}`}
             >
               ★
             </button>
@@ -210,27 +184,20 @@ export default function FeedbackBox({
       </div>
 
       <div className="astro-feedback-section">
-        <div className="astro-feedback-label">
-          What could be improved?
-        </div>
+        <div className="astro-feedback-label">What could be improved?</div>
 
         <div className="astro-feedback-chips">
           {improvementOptions.map((option) => {
-            const selected =
-              improvements.includes(option);
+            const selected = improvements.includes(option);
 
             return (
               <button
                 key={option}
                 type="button"
                 className={`astro-feedback-chip ${
-                  selected
-                    ? "astro-feedback-chip-active"
-                    : ""
+                  selected ? "astro-feedback-chip-active" : ""
                 }`}
-                onClick={() =>
-                  toggleImprovement(option)
-                }
+                onClick={() => toggleImprovement(option)}
               >
                 {option}
               </button>
@@ -250,9 +217,7 @@ export default function FeedbackBox({
         <textarea
           id={`feedback-${messageId}`}
           value={comment}
-          onChange={(event) =>
-            setComment(event.target.value)
-          }
+          onChange={(event) => setComment(event.target.value)}
           placeholder="What would make this answer better?"
           rows={3}
           maxLength={1000}
@@ -264,11 +229,7 @@ export default function FeedbackBox({
         </div>
       </div>
 
-      {error && (
-        <div className="astro-feedback-error">
-          {error}
-        </div>
-      )}
+      {error && <div className="astro-feedback-error">{error}</div>}
 
       <div className="astro-feedback-footer">
         <button

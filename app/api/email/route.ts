@@ -3,21 +3,14 @@ import { sendAstroEmail } from "@/lib/sendAstroEmail";
 
 export const runtime = "nodejs";
 
-export async function POST(
-  req: NextRequest,
-) {
+export async function POST(req: NextRequest) {
   try {
-    const body: unknown =
-      await req.json();
+    const body: unknown = await req.json();
 
-    if (
-      !body ||
-      typeof body !== "object"
-    ) {
+    if (!body || typeof body !== "object") {
       return NextResponse.json(
         {
-          error:
-            "Invalid request body.",
+          error: "Invalid request body.",
         },
         {
           status: 400,
@@ -25,23 +18,21 @@ export async function POST(
       );
     }
 
-    const data =
-      body as {
-        profile?: {
+    const data = body as {
+      profile?: {
+        name?: unknown;
+        dateOfBirth?: unknown;
+        timeOfBirth?: unknown;
+        placeOfBirth?: {
           name?: unknown;
-          dateOfBirth?: unknown;
-          timeOfBirth?: unknown;
-          placeOfBirth?: {
-            name?: unknown;
-            displayName?: unknown;
-          } | null;
-        };
-        question?: unknown;
-        answer?: unknown;
+          displayName?: unknown;
+        } | null;
       };
+      question?: unknown;
+      answer?: unknown;
+    };
 
-    const profile =
-      data.profile;
+    const profile = data.profile;
 
     if (
       !profile ||
@@ -49,15 +40,12 @@ export async function POST(
       typeof profile.dateOfBirth !== "string" ||
       typeof profile.timeOfBirth !== "string" ||
       !profile.placeOfBirth ||
-      typeof profile.placeOfBirth.name !==
-        "string" ||
-      typeof profile.placeOfBirth.displayName !==
-        "string"
+      typeof profile.placeOfBirth.name !== "string" ||
+      typeof profile.placeOfBirth.displayName !== "string"
     ) {
       return NextResponse.json(
         {
-          error:
-            "Invalid birth profile.",
+          error: "Invalid birth profile.",
         },
         {
           status: 400,
@@ -65,15 +53,10 @@ export async function POST(
       );
     }
 
-    if (
-      typeof data.question !==
-        "string" ||
-      !data.question.trim()
-    ) {
+    if (typeof data.question !== "string" || !data.question.trim()) {
       return NextResponse.json(
         {
-          error:
-            "Question is required.",
+          error: "Question is required.",
         },
         {
           status: 400,
@@ -81,15 +64,10 @@ export async function POST(
       );
     }
 
-    if (
-      typeof data.answer !==
-        "string" ||
-      !data.answer.trim()
-    ) {
+    if (typeof data.answer !== "string" || !data.answer.trim()) {
       return NextResponse.json(
         {
-          error:
-            "Answer is required.",
+          error: "Answer is required.",
         },
         {
           status: 400,
@@ -100,42 +78,28 @@ export async function POST(
     await sendAstroEmail({
       profile: {
         name: profile.name,
-        dateOfBirth:
-          profile.dateOfBirth,
-        timeOfBirth:
-          profile.timeOfBirth,
+        dateOfBirth: profile.dateOfBirth,
+        timeOfBirth: profile.timeOfBirth,
         placeOfBirth: {
-          name:
-            profile.placeOfBirth.name,
-          displayName:
-            profile.placeOfBirth.displayName,
+          name: profile.placeOfBirth.name,
+          displayName: profile.placeOfBirth.displayName,
         },
       },
 
-      question:
-        data.question.trim(),
+      question: data.question.trim(),
 
-      answer:
-        data.answer.trim(),
+      answer: data.answer.trim(),
     });
 
     return NextResponse.json({
       success: true,
-      message:
-        "AstroAI email sent successfully.",
+      message: "AstroAI email sent successfully.",
     });
   } catch (error) {
-    console.error(
-      "Email API error:",
-      error,
-    );
 
     return NextResponse.json(
       {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Unable to send email.",
+        error: error instanceof Error ? error.message : "Unable to send email.",
       },
       {
         status: 500,

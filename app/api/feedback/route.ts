@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import clientPromise from "@/lib/mongodb";
 
-const DB_NAME =
-  process.env.MONGODB_DB?.trim() || "astroai";
+const DB_NAME = process.env.MONGODB_DB?.trim() || "astroai";
 
 const COLLECTION_NAME = "feedback";
 
@@ -48,10 +47,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (
-      helpful !== undefined &&
-      typeof helpful !== "boolean"
-    ) {
+    if (helpful !== undefined && typeof helpful !== "boolean") {
       return NextResponse.json(
         {
           success: false,
@@ -64,9 +60,7 @@ export async function POST(request: NextRequest) {
     if (
       rating !== undefined &&
       rating !== null &&
-      (!Number.isInteger(rating) ||
-        rating < 1 ||
-        rating > 5)
+      (!Number.isInteger(rating) || rating < 1 || rating > 5)
     ) {
       return NextResponse.json(
         {
@@ -85,23 +79,14 @@ export async function POST(request: NextRequest) {
       sessionId: String(sessionId),
       messageId: String(messageId),
 
-      question:
-        typeof question === "string"
-          ? question.trim()
-          : "",
+      question: typeof question === "string" ? question.trim() : "",
 
-      answer:
-        typeof answer === "string"
-          ? answer.trim()
-          : "",
+      answer: typeof answer === "string" ? answer.trim() : "",
 
       profile:
         profile && typeof profile === "object"
           ? {
-              name:
-                typeof profile.name === "string"
-                  ? profile.name
-                  : "",
+              name: typeof profile.name === "string" ? profile.name : "",
               dateOfBirth:
                 typeof profile.dateOfBirth === "string"
                   ? profile.dateOfBirth
@@ -111,53 +96,34 @@ export async function POST(request: NextRequest) {
                   ? profile.timeOfBirth
                   : "",
               placeOfBirth:
-                profile.placeOfBirth &&
-                typeof profile.placeOfBirth ===
-                  "object"
+                profile.placeOfBirth && typeof profile.placeOfBirth === "object"
                   ? {
                       name:
-                        typeof profile.placeOfBirth
-                          .name === "string"
+                        typeof profile.placeOfBirth.name === "string"
                           ? profile.placeOfBirth.name
                           : "",
                       displayName:
-                        typeof profile.placeOfBirth
-                          .displayName === "string"
-                          ? profile.placeOfBirth
-                              .displayName
+                        typeof profile.placeOfBirth.displayName === "string"
+                          ? profile.placeOfBirth.displayName
                           : "",
                     }
                   : null,
             }
           : null,
 
-      helpful:
-        typeof helpful === "boolean"
-          ? helpful
-          : null,
+      helpful: typeof helpful === "boolean" ? helpful : null,
 
       rating:
-        Number.isInteger(rating) &&
-        rating >= 1 &&
-        rating <= 5
-          ? rating
-          : null,
+        Number.isInteger(rating) && rating >= 1 && rating <= 5 ? rating : null,
 
-      improvements:
-        Array.isArray(improvements)
-          ? improvements
-              .filter(
-                (item): item is string =>
-                  typeof item === "string",
-              )
-              .map((item) => item.trim())
-              .filter(Boolean)
-          : [],
+      improvements: Array.isArray(improvements)
+        ? improvements
+            .filter((item): item is string => typeof item === "string")
+            .map((item) => item.trim())
+            .filter(Boolean)
+        : [],
 
-      comment:
-        typeof comment === "string"
-          ? comment.trim()
-          : "",
+      comment: typeof comment === "string" ? comment.trim() : "",
 
       reply: null,
 
@@ -165,14 +131,9 @@ export async function POST(request: NextRequest) {
       updatedAt: new Date(),
     };
 
-    const result = await db
-      .collection(COLLECTION_NAME)
-      .insertOne(feedback);
+    const result = await db.collection(COLLECTION_NAME).insertOne(feedback);
 
-    console.log(
-      "✅ FEEDBACK SAVED:",
-      result.insertedId.toString(),
-    );
+    console.log("✅ FEEDBACK SAVED:", result.insertedId.toString());
 
     return NextResponse.json(
       {
@@ -183,18 +144,12 @@ export async function POST(request: NextRequest) {
       { status: 201 },
     );
   } catch (error) {
-    console.error(
-      "❌ FEEDBACK POST ERROR:",
-      error,
-    );
+    console.error("❌ FEEDBACK POST ERROR:", error);
 
     return NextResponse.json(
       {
         success: false,
-        error:
-          error instanceof Error
-            ? error.message
-            : String(error),
+        error: error instanceof Error ? error.message : String(error),
       },
       { status: 500 },
     );
@@ -212,23 +167,18 @@ export async function POST(request: NextRequest) {
  */
 export async function GET(request: NextRequest) {
   try {
-    const { searchParams } =
-      new URL(request.url);
+    const { searchParams } = new URL(request.url);
 
-    const sessionId =
-      searchParams.get("sessionId");
+    const sessionId = searchParams.get("sessionId");
 
-    const messageId =
-      searchParams.get("messageId");
+    const messageId = searchParams.get("messageId");
 
-    const limitParam =
-      searchParams.get("limit");
+    const limitParam = searchParams.get("limit");
 
     const requestedLimit = Number(limitParam);
 
     const limit =
-      Number.isInteger(requestedLimit) &&
-      requestedLimit > 0
+      Number.isInteger(requestedLimit) && requestedLimit > 0
         ? Math.min(requestedLimit, 100)
         : 50;
 
@@ -259,18 +209,12 @@ export async function GET(request: NextRequest) {
       feedback,
     });
   } catch (error) {
-    console.error(
-      "❌ FEEDBACK GET ERROR:",
-      error,
-    );
+    console.error("❌ FEEDBACK GET ERROR:", error);
 
     return NextResponse.json(
       {
         success: false,
-        error:
-          error instanceof Error
-            ? error.message
-            : String(error),
+        error: error instanceof Error ? error.message : String(error),
       },
       { status: 500 },
     );

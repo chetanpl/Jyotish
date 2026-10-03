@@ -16,11 +16,7 @@ type Props = {
   chat: ReturnType<typeof useAstroChat>;
 };
 
-export default function ChatPanel({
-  t,
-  language,
-  chat,
-}: Props) {
+export default function ChatPanel({ t, language, chat }: Props) {
   const {
     input,
     messages,
@@ -36,19 +32,13 @@ export default function ChatPanel({
     feedbackMessageId,
   } = chat;
 
-  const minutes = String(
-    Math.floor(cooldownRemaining / 60),
-  ).padStart(2, "0");
+  const minutes = String(Math.floor(cooldownRemaining / 60)).padStart(2, "0");
 
-  const seconds = String(
-    cooldownRemaining % 60,
-  ).padStart(2, "0");
+  const seconds = String(cooldownRemaining % 60).padStart(2, "0");
 
-  const displayedValidationError =
-    inputValidationError ?? validationText;
+  const displayedValidationError = inputValidationError ?? validationText;
 
-  const hasValidationError =
-    displayedValidationError !== null;
+  const hasValidationError = displayedValidationError !== null;
 
   /*
    * ==========================================================
@@ -69,8 +59,7 @@ export default function ChatPanel({
       ? null
       : messages.find(
           (message) =>
-            message.id === feedbackMessageId &&
-            message.role === "assistant",
+            message.id === feedbackMessageId && message.role === "assistant",
         );
 
   return (
@@ -118,62 +107,39 @@ export default function ChatPanel({
               </p>
 
               <div className="mt-5 flex flex-wrap justify-center gap-2">
-                {t.chat.quickQuestions.map(
-                  (question) => (
-                    <button
-                      key={question}
-                      type="button"
-                      onClick={() =>
-                        selectQuickQuestion(
-                          question,
-                        )
-                      }
-                      className="astro-chip rounded-full border border-[#ddd7cd] bg-[#faf9f6] px-3 py-2 text-xs text-[#697282]"
-                    >
-                      {question}
-                    </button>
-                  ),
-                )}
+                {t.chat.quickQuestions.map((question) => (
+                  <button
+                    key={question}
+                    type="button"
+                    onClick={() => selectQuickQuestion(question)}
+                    className="astro-chip rounded-full border border-[#ddd7cd] bg-[#faf9f6] px-3 py-2 text-xs text-[#697282]"
+                  >
+                    {question}
+                  </button>
+                ))}
               </div>
             </div>
           </div>
         )}
 
         {messages.map((message, index) => {
-          const isUser =
-            message.role === "user";
+          const isUser = message.role === "user";
 
-          const isAssistant =
-            message.role === "assistant";
+          const isAssistant = message.role === "assistant";
 
           return (
             <div
               key={message.id}
               className={`astro-message flex ${
-                isUser
-                  ? "justify-end"
-                  : "justify-start"
+                isUser ? "justify-end" : "justify-start"
               }`}
               style={{
-                animationDelay: `${Math.min(
-                  index * 70,
-                  500,
-                )}ms`,
+                animationDelay: `${Math.min(index * 70, 500)}ms`,
               }}
             >
-              <div
-                className={
-                  isAssistant
-                    ? "w-full"
-                    : "w-auto"
-                }
-              >
+              <div className={isAssistant ? "w-full" : "w-auto"}>
                 <div
-                  className={`flex ${
-                    isUser
-                      ? "justify-end"
-                      : "justify-start"
-                  }`}
+                  className={`flex ${isUser ? "justify-end" : "justify-start"}`}
                 >
                   <div
                     className={`max-w-[88%] rounded-2xl px-4 py-3 text-sm leading-6 sm:max-w-[78%] ${
@@ -182,9 +148,7 @@ export default function ChatPanel({
                         : "rounded-bl-md border border-[#e2ddd4] bg-[#f8f6f2] text-[#4d5666]"
                     }`}
                   >
-                    <div className="whitespace-pre-wrap">
-                      {message.content}
-                    </div>
+                    <div className="whitespace-pre-wrap">{message.content}</div>
                   </div>
                 </div>
               </div>
@@ -283,9 +247,7 @@ export default function ChatPanel({
                     100,
                     Math.max(
                       0,
-                      (cooldownRemaining /
-                        CHAT_COOLDOWN_SECONDS) *
-                        100,
+                      (cooldownRemaining / CHAT_COOLDOWN_SECONDS) * 100,
                     ),
                   )}%`,
                 }}
@@ -301,11 +263,7 @@ export default function ChatPanel({
         <div className="flex items-end gap-3">
           <textarea
             value={input}
-            onChange={(event) =>
-              handleInputChange(
-                event.target.value,
-              )
-            }
+            onChange={(event) => handleInputChange(event.target.value)}
             onKeyDown={handleKeyDown}
             disabled={sending}
             rows={3}
@@ -317,17 +275,13 @@ export default function ChatPanel({
             }`}
             aria-invalid={hasValidationError}
             aria-describedby={
-              hasValidationError
-                ? "chat-validation"
-                : undefined
+              hasValidationError ? "chat-validation" : undefined
             }
           />
 
           <button
             type="button"
-            onClick={() =>
-              void sendMessage()
-            }
+            onClick={() => void sendMessage()}
             disabled={!canSend()}
             className="astro-send-button flex h-[78px] w-14 shrink-0 items-center justify-center rounded-2xl bg-[#6b4f8a] text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-40"
             aria-label={t.chat.send}
@@ -381,9 +335,7 @@ export default function ChatPanel({
             <FeedbackBox
               sessionId={chat.sessionId}
               messageId={feedbackMessage.id}
-              question={
-                feedbackMessage.question ?? ""
-              }
+              question={feedbackMessage.question ?? ""}
               answer={feedbackMessage.content}
               profile={chat.profile}
             />

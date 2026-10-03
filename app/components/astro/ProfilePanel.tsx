@@ -8,11 +8,7 @@ import LanguageSelector from "./LanguageSelector";
 import LocationField from "./LocationField";
 import PrivacyNotice from "./PrivacyNotice";
 import SelectedLocationCard from "./SelectedLocationCard";
-import type {
-  BirthProfileState,
-  ProfileChangeHandler,
-  UiText,
-} from "./types";
+import type { BirthProfileState, ProfileChangeHandler, UiText } from "./types";
 
 type Props = {
   t: UiText;
@@ -77,9 +73,7 @@ export default function ProfilePanel({
               id="name"
               type="text"
               value={profile.name}
-              onChange={(event) =>
-                onProfileChange("name", event.target.value)
-              }
+              onChange={(event) => onProfileChange("name", event.target.value)}
               placeholder={t.profile.namePlaceholder}
               className={INPUT_CLASS}
             />

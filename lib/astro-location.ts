@@ -18,10 +18,7 @@ export function extractLocationSuggestions(
       items = object.suggestions;
     } else if (Array.isArray(object.results)) {
       items = object.results;
-    } else if (
-      typeof object.data === "object" &&
-      object.data !== null
-    ) {
+    } else if (typeof object.data === "object" && object.data !== null) {
       const data = object.data as Record<string, unknown>;
 
       if (Array.isArray(data.suggestions)) {
@@ -39,31 +36,17 @@ export function extractLocationSuggestions(
 
     const source = item as Record<string, unknown>;
 
-    const placeIdValue =
-      source.placeId ??
-      source.place_id ??
-      source.id;
+    const placeIdValue = source.placeId ?? source.place_id ?? source.id;
 
     const nameValue =
-      source.name ??
-      source.displayName ??
-      source.display_name ??
-      source.label;
+      source.name ?? source.displayName ?? source.display_name ?? source.label;
 
     const displayNameValue =
-      source.displayName ??
-      source.display_name ??
-      source.label ??
-      source.name;
+      source.displayName ?? source.display_name ?? source.label ?? source.name;
 
-    const latitudeValue =
-      source.latitude ??
-      source.lat;
+    const latitudeValue = source.latitude ?? source.lat;
 
-    const longitudeValue =
-      source.longitude ??
-      source.lon ??
-      source.lng;
+    const longitudeValue = source.longitude ?? source.lon ?? source.lng;
 
     const placeId =
       typeof placeIdValue === "string"
@@ -72,20 +55,13 @@ export function extractLocationSuggestions(
           ? String(placeIdValue)
           : "";
 
-    const name =
-      typeof nameValue === "string"
-        ? nameValue
-        : "";
+    const name = typeof nameValue === "string" ? nameValue : "";
 
     const displayName =
-      typeof displayNameValue === "string"
-        ? displayNameValue
-        : "";
+      typeof displayNameValue === "string" ? displayNameValue : "";
 
     const latitude =
-      typeof latitudeValue === "number"
-        ? latitudeValue
-        : Number(latitudeValue);
+      typeof latitudeValue === "number" ? latitudeValue : Number(latitudeValue);
 
     const longitude =
       typeof longitudeValue === "number"
@@ -135,24 +111,12 @@ export function getTimezoneFromCoordinates(
   latitude: number,
   longitude: number,
 ): string {
-  if (
-    !Number.isFinite(latitude) ||
-    !Number.isFinite(longitude)
-  ) {
-    throw new Error(
-      "Invalid latitude or longitude.",
-    );
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+    throw new Error("Invalid latitude or longitude.");
   }
 
-  if (
-    latitude < -90 ||
-    latitude > 90 ||
-    longitude < -180 ||
-    longitude > 180
-  ) {
-    throw new Error(
-      "Latitude or longitude is outside the valid range.",
-    );
+  if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
+    throw new Error("Latitude or longitude is outside the valid range.");
   }
 
   return tzlookup(latitude, longitude);

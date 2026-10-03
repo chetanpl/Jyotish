@@ -5,13 +5,10 @@ export async function POST(req: NextRequest) {
   try {
     const { latitude, longitude } = await req.json();
 
-    if (
-      typeof latitude !== "number" ||
-      typeof longitude !== "number"
-    ) {
+    if (typeof latitude !== "number" || typeof longitude !== "number") {
       return NextResponse.json(
         { error: "Invalid coordinates" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -20,7 +17,7 @@ export async function POST(req: NextRequest) {
     if (!timezones || timezones.length === 0) {
       return NextResponse.json(
         { error: "Timezone not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
@@ -34,7 +31,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(
       { error: "Unable to determine timezone" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

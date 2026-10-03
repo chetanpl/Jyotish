@@ -3,11 +3,7 @@ import {
   isMeridiem,
   setTimeFrom12Hour,
 } from "@/lib/astro-ui";
-import type {
-  BirthProfileState,
-  ProfileChangeHandler,
-  UiText,
-} from "./types";
+import type { BirthProfileState, ProfileChangeHandler, UiText } from "./types";
 
 type Props = {
   t: UiText;
@@ -26,11 +22,7 @@ const MINUTES = Array.from({ length: 60 }, (_, index) =>
   String(index).padStart(2, "0"),
 );
 
-export default function BirthTimeField({
-  t,
-  profile,
-  onProfileChange,
-}: Props) {
+export default function BirthTimeField({ t, profile, onProfileChange }: Props) {
   const timeParts = formatTime12Hour(profile.timeOfBirth);
 
   return (

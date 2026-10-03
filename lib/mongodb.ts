@@ -10,16 +10,12 @@ console.log("🔎 MONGODB URI CHECK:", {
 });
 
 if (!uri) {
-  throw new Error(
-    "Missing MONGODB_URI environment variable",
-  );
+  throw new Error("Missing MONGODB_URI environment variable");
 }
 
 declare global {
   // eslint-disable-next-line no-var
-  var _mongoClientPromise:
-    | Promise<MongoClient>
-    | undefined;
+  var _mongoClientPromise: Promise<MongoClient> | undefined;
 }
 
 let clientPromise: Promise<MongoClient>;
@@ -30,17 +26,14 @@ if (process.env.NODE_ENV === "development") {
 
     const client = new MongoClient(uri);
 
-    global._mongoClientPromise =
-      client.connect();
+    global._mongoClientPromise = client.connect();
   }
 
-  clientPromise =
-    global._mongoClientPromise;
+  clientPromise = global._mongoClientPromise;
 } else {
   const client = new MongoClient(uri);
 
-  clientPromise =
-    client.connect();
+  clientPromise = client.connect();
 }
 
 export default clientPromise;
