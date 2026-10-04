@@ -330,17 +330,18 @@ export default function ChatPanel({ t, language, chat }: Props) {
             FEEDBACK
         ==================================================== */}
 
-        {feedbackMessage && (
-          <div className="astro-feedback-buzz mt-4">
-            <FeedbackBox
-              sessionId={chat.sessionId}
-              messageId={feedbackMessage.id}
-              question={feedbackMessage.question ?? ""}
-              answer={feedbackMessage.content}
-              profile={chat.profile}
-            />
-          </div>
-        )}
+{feedbackMessage && (
+  <div className="astro-feedback-buzz mt-4">
+    <FeedbackBox
+      t={t}
+      sessionId={chat.sessionId}
+      messageId={feedbackMessage.id}
+      question={feedbackMessage.question ?? ""}
+      answer={feedbackMessage.content}
+      profile={chat.profile}
+    />
+  </div>
+)}
 
         {/* ===================================================
             FOOTER

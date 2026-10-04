@@ -144,6 +144,42 @@ export type UiText = {
     emptyAnswer: string;
   };
 
+  feedback: {
+    title: string;
+    subtitle: string;
+
+    helpful: string;
+    notHelpful: string;
+
+    ratingLabel: string;
+
+    improvementLabel: string;
+
+    improvements: {
+      specific: string;
+      detailed: string;
+      explanation: string;
+      timing: string;
+      easier: string;
+      other: string;
+    };
+
+    messageLabel: string;
+    messagePlaceholder: string;
+
+    send: string;
+    sending: string;
+
+    validationHelpful: string;
+    validationRating: string;
+    validationMessage: string;
+
+    successTitle: string;
+    successMessage: string;
+
+    saveError: string;
+  };
+
   footer: {
     description: string;
     disclaimer: string;
@@ -438,6 +474,61 @@ const ENGLISH_TEXT: UiText = {
     emptyAnswer: "I could not generate a response.",
   },
 
+  feedback: {
+    title: "How was this answer?",
+
+    subtitle:
+      "Please select Helpful or Not helpful, give a rating, and enter a message.",
+
+    helpful: "Helpful",
+
+    notHelpful: "Not helpful",
+
+    ratingLabel: "Rate this answer",
+
+    improvementLabel: "What could be improved?",
+
+    improvements: {
+      specific: "More specific",
+
+      detailed: "More detailed",
+
+      explanation: "Better explanation",
+
+      timing: "Better timing",
+
+      easier: "Easier to understand",
+
+      other: "Other",
+    },
+
+    messageLabel: "Tell us more",
+
+    messagePlaceholder:
+      "What would make this answer better?",
+
+    send: "Send Feedback",
+
+    sending: "Sending...",
+
+    validationHelpful:
+      "Please select Helpful or Not helpful.",
+
+    validationRating:
+      "Please select a rating from 1 to 5 stars.",
+
+    validationMessage:
+      "Please enter a message about your feedback.",
+
+    successTitle: "Thank you for your feedback",
+
+    successMessage:
+      "Your feedback helps us improve AstroAI.",
+
+    saveError:
+      "Unable to save your feedback. Please try again.",
+  },
+
   footer: {
     description: "Vedic astrology guidance for reflection and insight.",
 
@@ -587,6 +678,61 @@ const HINDI_TEXT: UiText = {
     generic: "कुछ गलत हो गया। कृपया दोबारा प्रयास करें।",
 
     emptyAnswer: "उत्तर तैयार नहीं हो सका।",
+  },
+
+  feedback: {
+    title: "यह उत्तर कैसा लगा?",
+
+    subtitle:
+      "कृपया उपयोगी या उपयोगी नहीं चुनें, रेटिंग दें और अपना संदेश लिखें।",
+
+    helpful: "उपयोगी",
+
+    notHelpful: "उपयोगी नहीं",
+
+    ratingLabel: "इस उत्तर को रेट करें",
+
+    improvementLabel: "क्या बेहतर किया जा सकता है?",
+
+    improvements: {
+      specific: "अधिक विशिष्ट",
+
+      detailed: "अधिक विस्तृत",
+
+      explanation: "बेहतर व्याख्या",
+
+      timing: "बेहतर समय",
+
+      easier: "समझने में आसान",
+
+      other: "अन्य",
+    },
+
+    messageLabel: "अपनी राय बताएं",
+
+    messagePlaceholder:
+      "इस उत्तर को बेहतर बनाने के लिए क्या किया जा सकता है?",
+
+    send: "फीडबैक भेजें",
+
+    sending: "भेजा जा रहा है...",
+
+    validationHelpful:
+      "कृपया उपयोगी या उपयोगी नहीं में से एक चुनें।",
+
+    validationRating:
+      "कृपया 1 से 5 स्टार की रेटिंग चुनें।",
+
+    validationMessage:
+      "कृपया अपने फीडबैक के बारे में संदेश लिखें।",
+
+    successTitle: "आपके फीडबैक के लिए धन्यवाद",
+
+    successMessage:
+      "आपका फीडबैक AstroAI को बेहतर बनाने में मदद करता है।",
+
+    saveError:
+      "फीडबैक सेव नहीं हो सका। कृपया दोबारा प्रयास करें।",
   },
 
   footer: {
