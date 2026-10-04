@@ -21,10 +21,6 @@ const COOLDOWN_BYPASS_CODE = "7890";
 
 /**
  * Feedback is shown only once per browser session.
- *
- * The session id itself is also persisted in sessionStorage,
- * so a page refresh does not create a completely new chat
- * session for feedback purposes.
  */
 const CHAT_SESSION_STORAGE_KEY = "pal-jyotish-ai-chat-session-id";
 
@@ -48,7 +44,6 @@ const BLOCKED_WORDS = [
   "piss",
   "slut",
   "whore",
-
   "porn",
   "pornography",
   "porno",
@@ -131,6 +126,16 @@ export type AstroMessage = Message & {
   question?: string;
 };
 
+/**
+ * Extends the shared API response type locally so this hook
+ * remains type-safe even if ChatResponse in astro-ui.ts has
+ * not yet been updated with provider/model.
+ */
+type AstroChatResponse = ChatResponse & {
+  provider?: "gemini" | "groq";
+  model?: string;
+};
+
 function createMessageId(): string {
   return crypto.randomUUID();
 }
@@ -191,6 +196,16 @@ export function useAstroChat({ profile, language, t }: Options) {
 
   const [conversationTopic, setConversationTopic] = useState<string>("");
 
+  /*
+   * Actual AI provider/model used by the most recent
+   * successful API request.
+   */
+  const [provider, setProvider] = useState<"gemini" | "groq" | undefined>(
+    undefined,
+  );
+
+  const [model, setModel] = useState<string | undefined>(undefined);
+
   const [cooldownRemaining, setCooldownRemaining] = useState<number>(
     getInitialCooldownSeconds,
   );
@@ -205,9 +220,6 @@ export function useAstroChat({ profile, language, t }: Options) {
 
   /**
    * Controls the temporary "How did we do?" notice.
-   *
-   * The FeedbackBox itself remains visible after this
-   * notification disappears.
    */
   const [feedbackNotificationVisible, setFeedbackNotificationVisible] =
     useState<boolean>(false);
@@ -256,13 +268,6 @@ export function useAstroChat({ profile, language, t }: Options) {
      FEEDBACK SOUND
      ======================================================= */
 
-  /**
-   * Creates/resumes the AudioContext while the user is
-   * interacting with the chat.
-   *
-   * This helps browsers such as Chrome/Safari allow the
-   * later notification sound after the API response.
-   */
   function prepareFeedbackSound(): void {
     if (typeof window === "undefined") {
       return;
@@ -283,11 +288,6 @@ export function useAstroChat({ profile, language, t }: Options) {
     }
   }
 
-  /**
-   * Very small, soft two-tone notification.
-   *
-   * No audio file is required.
-   */
   function playFeedbackSound(): void {
     if (typeof window === "undefined") {
       return;
@@ -345,11 +345,6 @@ export function useAstroChat({ profile, language, t }: Options) {
     }
   }
 
-  /**
-   * Shows notification for a short time.
-   *
-   * The form itself does NOT disappear afterwards.
-   */
   function showFeedbackNotification(): void {
     if (notificationTimeoutRef.current !== null) {
       window.clearTimeout(notificationTimeoutRef.current);
@@ -559,9 +554,6 @@ export function useAstroChat({ profile, language, t }: Options) {
 
     /*
      * Unlock/prep audio during the user's send action.
-     *
-     * The actual sound is only played after the first
-     * successful AI answer.
      */
     prepareFeedbackSound();
 
@@ -586,38 +578,53 @@ export function useAstroChat({ profile, language, t }: Options) {
        API REQUEST
        ===================================================== */
 
+    let requestSucceeded = false;
+
     try {
       const response = await fetch("/api/chat", {
         method: "POST",
 
         headers: {
           "Content-Type": "application/json",
-
           Accept: "application/json",
         },
 
         body: JSON.stringify({
           sessionId,
-
           profile,
-
           language,
-
           messages: [
             {
               role: "user",
               content: question,
             },
           ],
-
           conversationTopic,
         }),
       });
 
-      const data = (await response.json()) as ChatResponse;
+      const data = (await response.json()) as AstroChatResponse;
 
       if (!response.ok) {
         throw new Error(data.error ?? t.errors.chat);
+      }
+
+      /*
+       * The request reached the backend successfully and
+       * returned a valid HTTP response.
+       */
+      requestSucceeded = true;
+
+      /* ===================================================
+         ACTUAL AI PROVIDER + MODEL
+         =================================================== */
+
+      if (data.provider === "gemini" || data.provider === "groq") {
+        setProvider(data.provider);
+      }
+
+      if (typeof data.model === "string" && data.model.trim()) {
+        setModel(data.model.trim());
       }
 
       const answer =
@@ -625,7 +632,7 @@ export function useAstroChat({ profile, language, t }: Options) {
 
       /* ===================================================
          ASSISTANT MESSAGE
-      =================================================== */
+         =================================================== */
 
       const assistantMessage: AstroMessage = {
         id: createMessageId(),
@@ -638,20 +645,8 @@ export function useAstroChat({ profile, language, t }: Options) {
 
       /* ===================================================
          FIRST SUCCESSFUL ANSWER → FEEDBACK
-      =================================================== */
+         =================================================== */
 
-      /**
-       * IMPORTANT:
-       *
-       * Feedback is triggered only here, after the API
-       * successfully returned an answer.
-       *
-       * Follow-up answers do not create another form.
-       *
-       * sessionStorage prevents the feedback from being
-       * triggered again after a page refresh during the
-       * same browser session.
-       */
       const feedbackAlreadyShown = hasFeedbackAlreadyBeenShown();
 
       if (!feedbackAlreadyShown) {
@@ -666,7 +661,7 @@ export function useAstroChat({ profile, language, t }: Options) {
 
       /* ===================================================
          CONVERSATION TOPIC
-      =================================================== */
+         =================================================== */
 
       setConversationTopic(
         typeof data.conversationTopic === "string"
@@ -687,7 +682,15 @@ export function useAstroChat({ profile, language, t }: Options) {
       setMessages((current) => [...current, errorMessageItem]);
     } finally {
       setSending(false);
-      startCooldown();
+
+      /*
+       * Only start the cooldown after a successful API
+       * response. Failed requests should not consume the
+       * user's chat cooldown.
+       */
+      if (requestSucceeded) {
+        startCooldown();
+      }
     }
   }
 
@@ -727,6 +730,14 @@ export function useAstroChat({ profile, language, t }: Options) {
     conversationTopic,
 
     profile,
+
+    /*
+     * Actual AI provider/model used by the successful
+     * request. These are consumed by Home → Footer.
+     */
+    provider,
+
+    model,
 
     feedbackMessageId,
 
