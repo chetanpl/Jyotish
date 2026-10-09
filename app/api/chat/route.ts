@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import SwissEph from "swisseph-wasm";
 
 import { ASTROLOGY_SYSTEM_RULES } from "../../../lib/astrology-rules";
 import { callGroq } from "../../../lib/groq";
@@ -8,6 +7,12 @@ import {
   getConversationMemory,
   setConversationMemory,
 } from "../../../lib/conversation-cache";
+import {
+  calculateSwissChart,
+  serializeChartForAI,
+  type BirthProfile,
+  type SwissChart,
+} from "../../../lib/vedic-chart";
 
 export const runtime = "nodejs";
 
@@ -21,24 +26,6 @@ type ResponseLanguage = "en" | "hi";
 
 type ThinkingLevel = "low" | "medium" | "high";
 
-type BirthLocation = {
-  placeId?: string;
-  name: string;
-  displayName: string;
-  latitude: number;
-  longitude: number;
-  timezone: number | string;
-  timezoneId?: string | null;
-};
-
-type BirthProfile = {
-  name: string;
-  gender?: string;
-  dateOfBirth: string;
-  timeOfBirth: string;
-  placeOfBirth: BirthLocation | null;
-};
-
 type ChatMessage = {
   role: "user" | "assistant";
   content: string;
@@ -47,100 +34,6 @@ type ChatMessage = {
 type ConversationMemory = {
   summary: string;
   summaryMessageCount: number;
-};
-
-type ZodiacPosition = {
-  sign: string;
-  signIndex: number;
-  degree: number;
-  longitude: number;
-  formatted: string;
-};
-
-type Nakshatra = {
-  index: number;
-  name: string;
-  lord: string;
-  pada: number;
-  degreesIntoNakshatra: number;
-  formatted: string;
-};
-
-type PlanetData = {
-  name: string;
-  symbol: string;
-  longitude: number;
-  latitude?: number;
-  distance?: number;
-  speed?: number;
-  zodiac: ZodiacPosition;
-  nakshatra: Nakshatra;
-  house: number | null;
-  retrograde?: boolean;
-};
-
-type HouseData = {
-  house: number;
-  longitude: number;
-  zodiac: ZodiacPosition;
-};
-
-type DashaPeriod = {
-  lord: string;
-  start: string;
-  end: string;
-};
-
-type DashaEntry = {
-  lord: string;
-  start: string;
-  end: string;
-};
-
-type DashaData = {
-  moonNakshatra: Nakshatra;
-
-  mahadasha:
-    | (DashaPeriod & {
-        remainingYears: number;
-      })
-    | null;
-
-  antardasha: DashaPeriod | null;
-
-  timeline: DashaEntry[];
-};
-
-type SwissChart = {
-  calculation: {
-    julianDay: number;
-    utcBirthTime: string;
-    timezone: number;
-    timezoneId: string | null;
-    latitude: number;
-    longitude: number;
-    houseSystem: string;
-    zodiac: string;
-    ayanamsa: string;
-    ayanamsaValue: number | null;
-    swissEphemeris: string;
-  };
-
-  ascendant: {
-    longitude: number;
-    zodiac: ZodiacPosition;
-  };
-
-  midheaven: {
-    longitude: number;
-    zodiac: ZodiacPosition;
-  };
-
-  planets: Record<string, PlanetData>;
-
-  houses: HouseData[];
-
-  dasha: DashaData;
 };
 
 type GeminiPart = {
@@ -171,6 +64,23 @@ type GeminiErrorInfo = {
 
 /*
 |--------------------------------------------------------------------------
+| GEMINI KEY HEALTH
+|--------------------------------------------------------------------------
+*/
+
+type GeminiKeyHealth = {
+  failedUntil: number;
+  failureCount: number;
+  lastError?: string;
+};
+
+type RedisResponse<T = unknown> = {
+  result?: T;
+  error?: string;
+};
+
+/*
+|--------------------------------------------------------------------------
 | CONFIG
 |--------------------------------------------------------------------------
 */
@@ -179,7 +89,6 @@ const MODEL = process.env.GEMINI_MODEL?.trim() || "gemini-3.8-flash";
 
 const GEMINI_FALLBACK_MODELS = [
   process.env.GEMINI_FALLBACK_MODEL_1?.trim() || "gemini-3.7-flash",
-
   process.env.GEMINI_FALLBACK_MODEL_2?.trim() || "gemini-3.6-flash",
 ].filter(Boolean);
 
@@ -194,94 +103,213 @@ const MAX_SUMMARY_CHARS = 5000;
 
 const MAX_CONVERSATION_TOPIC_CHARS = 1800;
 
-const MAX_GEMINI_RETRIES = 1;
-
-const GEMINI_RETRY_DELAY_MS = 1000;
-
 const GEMINI_TIMEOUT_MS = 45_000;
 
 const MAX_MESSAGES = 100;
 
 const MAX_MESSAGE_LENGTH = 6000;
 
-const ZODIAC_SIGNS = [
-  "Aries",
-  "Taurus",
-  "Gemini",
-  "Cancer",
-  "Leo",
-  "Virgo",
-  "Libra",
-  "Scorpio",
-  "Sagittarius",
-  "Capricorn",
-  "Aquarius",
-  "Pisces",
-] as const;
+/*
+|--------------------------------------------------------------------------
+| 12-HOUR GEMINI KEY COOLDOWN
+|--------------------------------------------------------------------------
+*/
 
-const NAKSHATRAS = [
-  { name: "Ashwini", lord: "Ketu" },
-  { name: "Bharani", lord: "Venus" },
-  { name: "Krittika", lord: "Sun" },
-  { name: "Rohini", lord: "Moon" },
-  { name: "Mrigashira", lord: "Mars" },
-  { name: "Ardra", lord: "Rahu" },
-  { name: "Punarvasu", lord: "Jupiter" },
-  { name: "Pushya", lord: "Saturn" },
-  { name: "Ashlesha", lord: "Mercury" },
-  { name: "Magha", lord: "Ketu" },
-  { name: "Purva Phalguni", lord: "Venus" },
-  { name: "Uttara Phalguni", lord: "Sun" },
-  { name: "Hasta", lord: "Moon" },
-  { name: "Chitra", lord: "Mars" },
-  { name: "Swati", lord: "Rahu" },
-  { name: "Vishakha", lord: "Jupiter" },
-  { name: "Anuradha", lord: "Saturn" },
-  { name: "Jyeshtha", lord: "Mercury" },
-  { name: "Mula", lord: "Ketu" },
-  { name: "Purva Ashadha", lord: "Venus" },
-  { name: "Uttara Ashadha", lord: "Sun" },
-  { name: "Shravana", lord: "Moon" },
-  { name: "Dhanishta", lord: "Mars" },
-  { name: "Shatabhisha", lord: "Rahu" },
-  { name: "Purva Bhadrapada", lord: "Jupiter" },
-  { name: "Uttara Bhadrapada", lord: "Saturn" },
-  { name: "Revati", lord: "Mercury" },
-] as const;
+const GEMINI_KEY_COOLDOWN_MS = 12 * 60 * 60 * 1000;
 
-const DASHA_YEARS: Record<string, number> = {
-  Ketu: 7,
-  Venus: 20,
-  Sun: 6,
-  Moon: 10,
-  Mars: 7,
-  Rahu: 18,
-  Jupiter: 16,
-  Saturn: 19,
-  Mercury: 17,
-};
+const GEMINI_HEALTH_PREFIX = "gemini:key-health:";
 
-const DASHA_SEQUENCE = [
-  "Ketu",
-  "Venus",
-  "Sun",
-  "Moon",
-  "Mars",
-  "Rahu",
-  "Jupiter",
-  "Saturn",
-  "Mercury",
-];
+/*
+ * Local fallback.
+ *
+ * Redis should be configured in production because the local Map
+ * is only shared inside the current server instance.
+ */
+const localGeminiHealth = new Map<string, GeminiKeyHealth>();
+
+/*
+|--------------------------------------------------------------------------
+| REDIS HELPERS
+|--------------------------------------------------------------------------
+*/
+
+async function redisCommand<T = unknown>(
+  command: string[],
+): Promise<T | null> {
+  const url = process.env.UPSTASH_REDIS_REST_URL?.trim();
+
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN?.trim();
+
+  /*
+   * Redis is optional at code level.
+   *
+   * If it is not configured, the local Map will be used.
+   */
+  if (!url || !token) {
+    return null;
+  }
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+
+      cache: "no-store",
+
+      body: JSON.stringify(command),
+    });
+
+    if (!response.ok) {
+      console.error(
+        `[Gemini Health] Redis request failed: ${response.status}`,
+      );
+
+      return null;
+    }
+
+    const data = (await response.json()) as RedisResponse<T>;
+
+    if (data.error) {
+      console.error("[Gemini Health] Redis error:", data.error);
+
+      return null;
+    }
+
+    return data.result ?? null;
+  } catch (error) {
+    console.error(
+      "[Gemini Health] Redis connection failed:",
+      getErrorMessage(error),
+    );
+
+    return null;
+  }
+}
+
+function getGeminiHealthKey(keyName: string): string {
+  return `${GEMINI_HEALTH_PREFIX}${keyName}`;
+}
+
+async function getGeminiKeyHealth(
+  keyName: string,
+): Promise<GeminiKeyHealth | null> {
+  const redisKey = getGeminiHealthKey(keyName);
+
+  const redisValue = await redisCommand<string>([
+    "GET",
+    redisKey,
+  ]);
+
+  if (redisValue) {
+    try {
+      const parsed = JSON.parse(redisValue) as GeminiKeyHealth;
+
+      if (
+        typeof parsed.failedUntil === "number" &&
+        typeof parsed.failureCount === "number"
+      ) {
+        /*
+         * Cooldown still active.
+         */
+        if (parsed.failedUntil > Date.now()) {
+          return parsed;
+        }
+
+        /*
+         * Cooldown expired.
+         */
+        await clearGeminiKeyHealth(keyName);
+
+        return null;
+      }
+    } catch {
+      console.warn(
+        `[Gemini Health] Invalid Redis data for ${keyName}`,
+      );
+    }
+  }
+
+  /*
+   * Local fallback.
+   */
+  const localValue = localGeminiHealth.get(keyName);
+
+  if (!localValue) {
+    return null;
+  }
+
+  if (localValue.failedUntil <= Date.now()) {
+    localGeminiHealth.delete(keyName);
+
+    return null;
+  }
+
+  return localValue;
+}
+
+async function setGeminiKeyHealth(
+  keyName: string,
+  previous: GeminiKeyHealth | null,
+  errorMessage: string,
+): Promise<void> {
+  const failedUntil = Date.now() + GEMINI_KEY_COOLDOWN_MS;
+
+  const health: GeminiKeyHealth = {
+    failedUntil,
+
+    failureCount: (previous?.failureCount ?? 0) + 1,
+
+    lastError: clampString(errorMessage, 500),
+  };
+
+  /*
+   * Always update local state.
+   */
+  localGeminiHealth.set(keyName, health);
+
+  /*
+   * Persist globally in Redis.
+   */
+  const redisKey = getGeminiHealthKey(keyName);
+
+  const ttlSeconds = Math.ceil(
+    GEMINI_KEY_COOLDOWN_MS / 1000,
+  );
+
+  await redisCommand([
+    "SET",
+
+    redisKey,
+
+    JSON.stringify(health),
+
+    "EX",
+
+    String(ttlSeconds),
+  ]);
+}
+
+async function clearGeminiKeyHealth(
+  keyName: string,
+): Promise<void> {
+  localGeminiHealth.delete(keyName);
+
+  await redisCommand([
+    "DEL",
+
+    getGeminiHealthKey(keyName),
+  ]);
+}
 
 /*
 |--------------------------------------------------------------------------
 | GENERAL HELPERS
 |--------------------------------------------------------------------------
 */
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 function clampString(value: string, maxLength: number): string {
   return value.length > maxLength ? value.slice(0, maxLength) : value;
@@ -335,796 +363,49 @@ function getErrorStatus(error: unknown): number {
 
 /*
 |--------------------------------------------------------------------------
-| DATE / NUMBER HELPERS
+| GEMINI COOLDOWN DECISION
 |--------------------------------------------------------------------------
 */
 
-function round(value: number, decimals = 4): number {
-  const factor = 10 ** decimals;
-
-  return Math.round(value * factor) / factor;
-}
-
-function normalizeLongitude(longitude: number): number {
-  let result = longitude % 360;
-
-  if (result < 0) {
-    result += 360;
-  }
-
-  return result;
-}
-
-function formatDate(date: Date): string {
-  return date.toISOString().slice(0, 10);
-}
-
-function addDays(date: Date, days: number): Date {
-  const result = new Date(date);
-
-  result.setUTCDate(result.getUTCDate() + days);
-
-  return result;
-}
-
-function addYears(date: Date, years: number): Date {
-  const result = new Date(date);
-
-  result.setUTCFullYear(result.getUTCFullYear() + years);
-
-  return result;
-}
-
-function daysBetween(start: Date, end: Date): number {
-  return (end.getTime() - start.getTime()) / 86_400_000;
-}
-
-function yearsBetween(start: Date, end: Date): number {
-  return daysBetween(start, end) / 365.2425;
-}
-
-function parseNumber(value: unknown, fallback = 0): number {
-  const number = Number(value);
-
-  return Number.isFinite(number) ? number : fallback;
-}
-
-/*
-|--------------------------------------------------------------------------
-| ZODIAC / NAKSHATRA
-|--------------------------------------------------------------------------
-*/
-
-function getZodiacPosition(longitude: number): ZodiacPosition {
-  const normalized = normalizeLongitude(longitude);
-
-  const signIndex = Math.floor(normalized / 30);
-
-  const degree = normalized - signIndex * 30;
-
-  return {
-    sign: ZODIAC_SIGNS[signIndex],
-    signIndex,
-    degree: round(degree, 4),
-    longitude: round(normalized, 4),
-    formatted: `${ZODIAC_SIGNS[signIndex]} ${degree.toFixed(2)}°`,
-  };
-}
-
-function getNakshatra(longitude: number): Nakshatra {
-  const normalized = normalizeLongitude(longitude);
-
-  const nakshatraSize = 360 / 27;
-
-  const index = Math.min(26, Math.floor(normalized / nakshatraSize));
-
-  const degreesIntoNakshatra = normalized - index * nakshatraSize;
-
-  const pada = Math.min(
-    4,
-    Math.floor(degreesIntoNakshatra / (nakshatraSize / 4)) + 1,
-  );
-
-  const data = NAKSHATRAS[index];
-
-  return {
-    index,
-    name: data.name,
-    lord: data.lord,
-    pada,
-    degreesIntoNakshatra: round(degreesIntoNakshatra, 4),
-    formatted: `${data.name} Pada ${pada} (${data.lord})`,
-  };
-}
-
-/*
-|--------------------------------------------------------------------------
-| TIMEZONE
-|--------------------------------------------------------------------------
-*/
-
-function parseTimezone(location: BirthLocation): number {
-  const timezone = location.timezone;
-
-  if (typeof timezone === "number") {
-    return timezone;
-  }
-
-  const parsed = Number(timezone);
-
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function getTimezoneId(location: BirthLocation): string | null {
-  return location.timezoneId || null;
-}
-
-function buildUtcBirthDate(
-  dateOfBirth: string,
-  timeOfBirth: string,
-  timezone: number,
-): Date {
-  const [year, month, day] = dateOfBirth.split("-").map(Number);
-
-  const [hours, minutes, seconds = 0] = timeOfBirth.split(":").map(Number);
-
-  const localMillis = Date.UTC(
-    year,
-    month - 1,
-    day,
-    hours || 0,
-    minutes || 0,
-    seconds || 0,
-  );
-
-  return new Date(localMillis - timezone * 60 * 60 * 1000);
-}
-
-/*
-|--------------------------------------------------------------------------
-| SWISS EPHEMERIS
-|--------------------------------------------------------------------------
-*/
-
-function getSwissPlanetId(swe: SwissEph, name: string): number {
-  const map: Record<string, number> = {
-    Sun: swe.SE_SUN,
-    Moon: swe.SE_MOON,
-    Mars: swe.SE_MARS,
-    Mercury: swe.SE_MERCURY,
-    Jupiter: swe.SE_JUPITER,
-    Venus: swe.SE_VENUS,
-    Saturn: swe.SE_SATURN,
-    Uranus: swe.SE_URANUS,
-    Neptune: swe.SE_NEPTUNE,
-    Pluto: swe.SE_PLUTO,
-  };
-
-  const planetId = map[name];
-
-  if (typeof planetId !== "number") {
-    throw new Error(`UNKNOWN_PLANET:${name}`);
-  }
-
-  return planetId;
-}
-
-function getPlanetSymbol(name: string): string {
-  const symbols: Record<string, string> = {
-    Sun: "☉",
-    Moon: "☽",
-    Mars: "♂",
-    Mercury: "☿",
-    Jupiter: "♃",
-    Venus: "♀",
-    Saturn: "♄",
-    Uranus: "♅",
-    Neptune: "♆",
-    Pluto: "♇",
-    Rahu: "☊",
-    Ketu: "☋",
-  };
-
-  return symbols[name] || "";
-}
-
-function findWholeSignHouse(
-  planetLongitude: number,
-  ascendantLongitude: number,
-): number {
-  const planetSign = Math.floor(normalizeLongitude(planetLongitude) / 30);
-
-  const ascendantSign = Math.floor(normalizeLongitude(ascendantLongitude) / 30);
-
-  return ((planetSign - ascendantSign + 12) % 12) + 1;
-}
-
-/*
-|--------------------------------------------------------------------------
-| SWISS CHART CALCULATION
-|--------------------------------------------------------------------------
-*/
-
-async function calculateSwissChart(profile: BirthProfile): Promise<SwissChart> {
-  if (!profile.placeOfBirth) {
-    throw new Error("BIRTH_LOCATION_REQUIRED");
-  }
-
-  const location = profile.placeOfBirth;
-
-  const timezone = parseTimezone(location);
-
-  const timezoneId = getTimezoneId(location);
-
-  const utcDate = buildUtcBirthDate(
-    profile.dateOfBirth,
-    profile.timeOfBirth,
-    timezone,
-  );
-
-  const year = utcDate.getUTCFullYear();
-
-  const month = utcDate.getUTCMonth() + 1;
-
-  const day = utcDate.getUTCDate();
-
-  const hour =
-    utcDate.getUTCHours() +
-    utcDate.getUTCMinutes() / 60 +
-    utcDate.getUTCSeconds() / 3600;
-
-  const swe = new SwissEph();
-
-  try {
-    await swe.initSwissEph();
-
-    swe.set_sid_mode(swe.SE_SIDM_LAHIRI, 0, 0);
-
-    const julianDay = swe.julday(year, month, day, hour);
-
-    const flags = swe.SEFLG_SWIEPH | swe.SEFLG_SIDEREAL | swe.SEFLG_SPEED;
-
-    const planetNames = [
-      "Sun",
-      "Moon",
-      "Mars",
-      "Mercury",
-      "Jupiter",
-      "Venus",
-      "Saturn",
-      "Uranus",
-      "Neptune",
-      "Pluto",
-    ];
-
-    const planets: Record<string, PlanetData> = {};
-
-    /*
-    |--------------------------------------------------------------------------
-    | PLANETS
-    |--------------------------------------------------------------------------
-    */
-
-    for (const planetName of planetNames) {
-      const planetId = getSwissPlanetId(swe, planetName);
-
-      const result = swe.calc_ut(julianDay, planetId, flags);
-
-      const values = Array.from(result);
-
-      if (values.length < 4) {
-        throw new Error(`INVALID_SWISS_RESULT:${planetName}`);
-      }
-
-      const longitude = normalizeLongitude(parseNumber(values[0]));
-
-      const latitude = parseNumber(values[1]);
-
-      const distance = parseNumber(values[2]);
-
-      const speed = parseNumber(values[3]);
-
-      planets[planetName] = {
-        name: planetName,
-
-        symbol: getPlanetSymbol(planetName),
-
-        longitude,
-
-        latitude,
-
-        distance,
-
-        speed,
-
-        zodiac: getZodiacPosition(longitude),
-
-        nakshatra: getNakshatra(longitude),
-
-        house: null,
-
-        retrograde: speed < 0,
-      };
-    }
-
-    /*
-    |--------------------------------------------------------------------------
-    | TRUE NODE / RAHU / KETU
-    |--------------------------------------------------------------------------
-    */
-
-    const nodeResult = swe.calc_ut(julianDay, swe.SE_TRUE_NODE, flags);
-
-    const nodeValues = Array.from(nodeResult);
-
-    if (nodeValues.length < 1) {
-      throw new Error("INVALID_SWISS_NODE_RESULT");
-    }
-
-    const rahuLongitude = normalizeLongitude(parseNumber(nodeValues[0]));
-
-    const ketuLongitude = normalizeLongitude(rahuLongitude + 180);
-
-    planets.Rahu = {
-      name: "Rahu",
-
-      symbol: "☊",
-
-      longitude: rahuLongitude,
-
-      zodiac: getZodiacPosition(rahuLongitude),
-
-      nakshatra: getNakshatra(rahuLongitude),
-
-      house: null,
-
-      retrograde: true,
-    };
-
-    planets.Ketu = {
-      name: "Ketu",
-
-      symbol: "☋",
-
-      longitude: ketuLongitude,
-
-      zodiac: getZodiacPosition(ketuLongitude),
-
-      nakshatra: getNakshatra(ketuLongitude),
-
-      house: null,
-
-      retrograde: true,
-    };
-
-    /*
-    |--------------------------------------------------------------------------
-    | HOUSES
-    |--------------------------------------------------------------------------
-    */
-
-    const housesResult = swe.houses(
-      julianDay,
-      location.latitude,
-      location.longitude,
-      "P",
-    );
-
-    const houseResultRecord = housesResult as unknown as {
-      cusps?: ArrayLike<number>;
-      ascendant?: number;
-      mc?: number;
-    };
-
-    const cusps = houseResultRecord.cusps
-      ? Array.from(houseResultRecord.cusps)
-      : [];
-
-    if (cusps.length < 12) {
-      throw new Error("INVALID_SWISS_HOUSE_RESULT");
-    }
-
-    const ascendantLongitude = normalizeLongitude(
-      parseNumber(houseResultRecord.ascendant, 0),
-    );
-
-    const midheavenLongitude = normalizeLongitude(
-      parseNumber(houseResultRecord.mc, 0),
-    );
-
-    const houses: HouseData[] = Array.from({ length: 12 }, (_, index) => {
-      const longitude = normalizeLongitude(parseNumber(cusps[index], 0));
-
-      return {
-        house: index + 1,
-
-        longitude,
-
-        zodiac: getZodiacPosition(longitude),
-      };
-    });
-
-    /*
-    |--------------------------------------------------------------------------
-    | WHOLE-SIGN VEDIC HOUSES
-    |--------------------------------------------------------------------------
-    */
-
-    for (const planet of Object.values(planets)) {
-      planet.house = findWholeSignHouse(planet.longitude, ascendantLongitude);
-    }
-
-    const ascendant = {
-      longitude: ascendantLongitude,
-
-      zodiac: getZodiacPosition(ascendantLongitude),
-    };
-
-    const midheaven = {
-      longitude: midheavenLongitude,
-
-      zodiac: getZodiacPosition(midheavenLongitude),
-    };
-
-    /*
-    |--------------------------------------------------------------------------
-    | VIMSHOTTARI DASHA
-    |--------------------------------------------------------------------------
-    */
-
-    const moon = planets.Moon;
-
-    if (!moon) {
-      throw new Error("MOON_CALCULATION_FAILED");
-    }
-
-    const calculationDate = new Date();
-
-    const dasha = getVimshottariDasha(
-      moon.nakshatra,
-      profile.dateOfBirth,
-      profile.timeOfBirth,
-      timezone,
-      calculationDate,
-    );
-
-    /*
-    |--------------------------------------------------------------------------
-    | AYANAMSA
-    |--------------------------------------------------------------------------
-    */
-
-    let ayanamsaValue: number | null = null;
-
-    try {
-      const value = swe.get_ayanamsa(julianDay);
-
-      if (typeof value === "number" && Number.isFinite(value)) {
-        ayanamsaValue = round(value, 6);
-      }
-    } catch {
-      ayanamsaValue = null;
-    }
-
-    return {
-      calculation: {
-        julianDay,
-
-        utcBirthTime: utcDate.toISOString(),
-
-        timezone,
-
-        timezoneId,
-
-        latitude: location.latitude,
-
-        longitude: location.longitude,
-
-        houseSystem: "Placidus calculation / Whole Sign Vedic interpretation",
-
-        zodiac: "Sidereal",
-
-        ayanamsa: "Lahiri",
-
-        ayanamsaValue,
-
-        swissEphemeris: "Swiss Ephemeris",
-      },
-
-      ascendant,
-
-      midheaven,
-
-      planets,
-
-      houses,
-
-      dasha,
-    };
-  } finally {
-    try {
-      swe.close();
-    } catch {
-      // Ignore cleanup errors.
-    }
-  }
-}
-
-/*
-|--------------------------------------------------------------------------
-| VIMSHOTTARI DASHA
-|--------------------------------------------------------------------------
-*/
-
-function getSequenceIndex(lord: string): number {
-  const index = DASHA_SEQUENCE.indexOf(lord);
-
-  return index >= 0 ? index : 0;
-}
-
-function getVimshottariDasha(
-  moonNakshatra: Nakshatra,
-  dateOfBirth: string,
-  timeOfBirth: string,
-  timezone: number,
-  calculationDate: Date,
-): DashaData {
-  const birthDate = buildUtcBirthDate(dateOfBirth, timeOfBirth, timezone);
-
-  const nakshatraLord = moonNakshatra.lord;
-
-  const nakshatraSize = 360 / 27;
-
-  const fractionElapsed = Math.min(
-    1,
-    Math.max(0, moonNakshatra.degreesIntoNakshatra / nakshatraSize),
-  );
-
-  const fullYears = DASHA_YEARS[nakshatraLord] || 7;
-
-  const remainingYears = fullYears * (1 - fractionElapsed);
-
-  const elapsedYears = fullYears - remainingYears;
-
-  const firstMahadashaStart = addYears(birthDate, -elapsedYears);
-
-  const timelineEnd = addYears(calculationDate, 30);
-
-  const timeline: DashaEntry[] = [];
-
-  type MahaEntry = {
-    lord: string;
-    start: Date;
-    end: Date;
-  };
-
-  const mahaPeriods: MahaEntry[] = [];
-
-  let currentStart = new Date(firstMahadashaStart);
-
-  let sequenceIndex = getSequenceIndex(nakshatraLord);
-
-  for (let cycle = 0; cycle < 5 && currentStart < timelineEnd; cycle += 1) {
-    for (let i = 0; i < DASHA_SEQUENCE.length; i += 1) {
-      const lord = DASHA_SEQUENCE[(sequenceIndex + i) % DASHA_SEQUENCE.length];
-
-      const durationYears = DASHA_YEARS[lord];
-
-      const currentEnd = addYears(currentStart, durationYears);
-
-      mahaPeriods.push({
-        lord,
-        start: new Date(currentStart),
-        end: new Date(currentEnd),
-      });
-
-      const mahaDays = Math.max(1, daysBetween(currentStart, currentEnd));
-
-      let antarStart = new Date(currentStart);
-
-      for (let j = 0; j < DASHA_SEQUENCE.length; j += 1) {
-        const antarLord =
-          DASHA_SEQUENCE[(sequenceIndex + i + j) % DASHA_SEQUENCE.length];
-
-        const antarDays = mahaDays * (DASHA_YEARS[antarLord] / 120);
-
-        let antarEnd = new Date(antarStart.getTime() + antarDays * 86_400_000);
-
-        if (antarEnd > currentEnd) {
-          antarEnd = new Date(currentEnd);
-        }
-
-        timeline.push({
-          lord: `${lord}/${antarLord}`,
-
-          start: formatDate(antarStart),
-
-          end: formatDate(antarEnd),
-        });
-
-        antarStart = new Date(antarEnd);
-      }
-
-      currentStart = new Date(currentEnd);
-
-      if (currentStart >= timelineEnd) {
-        break;
-      }
-    }
-
-    sequenceIndex = 0;
+function shouldCooldownGeminiKey(error: unknown): boolean {
+  const status = getErrorStatus(error);
+
+  const message = getErrorMessage(error).toLowerCase();
+
+  /*
+   * Temporary/provider-side failures.
+   */
+  if (
+    status === 408 ||
+    status === 409 ||
+    status === 429 ||
+    status === 500 ||
+    status === 502 ||
+    status === 503 ||
+    status === 504
+  ) {
+    return true;
   }
 
   /*
-  |--------------------------------------------------------------------------
-  | CURRENT MAHADASHA
-  |--------------------------------------------------------------------------
-  */
-
-  const currentMaha = mahaPeriods.find(
-    (period) => calculationDate >= period.start && calculationDate < period.end,
-  );
-
-  let mahadasha:
-    | (DashaPeriod & {
-        remainingYears: number;
-      })
-    | null = null;
-
-  if (currentMaha) {
-    mahadasha = {
-      lord: currentMaha.lord,
-
-      start: formatDate(currentMaha.start),
-
-      end: formatDate(currentMaha.end),
-
-      remainingYears: Math.max(
-        0,
-        yearsBetween(calculationDate, currentMaha.end),
-      ),
-    };
+   * Network/timeout failures generally have status 0.
+   */
+  if (status === 0) {
+    return (
+      message.includes("timeout") ||
+      message.includes("timed out") ||
+      message.includes("network") ||
+      message.includes("fetch failed") ||
+      message.includes("socket") ||
+      message.includes("econnreset") ||
+      message.includes("econnrefused") ||
+      message.includes("enotfound") ||
+      message.includes("abort") ||
+      message.includes("aborted")
+    );
   }
 
-  /*
-  |--------------------------------------------------------------------------
-  | CURRENT ANTARDASHA
-  |--------------------------------------------------------------------------
-  */
-
-  let antardasha: DashaPeriod | null = null;
-
-  if (currentMaha) {
-    const currentMahaStart = currentMaha.start;
-
-    const currentMahaEnd = currentMaha.end;
-
-    const currentMahaLord = currentMaha.lord;
-
-    const currentAntar = timeline.find((entry) => {
-      const [mahaLord, antarLord] = entry.lord.split("/");
-
-      if (mahaLord !== currentMahaLord) {
-        return false;
-      }
-
-      const start = new Date(`${entry.start}T00:00:00Z`);
-
-      const end = new Date(`${entry.end}T23:59:59Z`);
-
-      return (
-        start >= currentMahaStart &&
-        end <= addDays(currentMahaEnd, 1) &&
-        calculationDate >= start &&
-        calculationDate <= end &&
-        Boolean(antarLord)
-      );
-    });
-
-    if (currentAntar) {
-      antardasha = {
-        lord: currentAntar.lord.split("/")[1] || "",
-
-        start: currentAntar.start,
-
-        end: currentAntar.end,
-      };
-    }
-  }
-
-  return {
-    moonNakshatra,
-
-    mahadasha,
-
-    antardasha,
-
-    timeline,
-  };
-}
-
-/*
-|--------------------------------------------------------------------------
-| CHART SERIALIZATION
-|--------------------------------------------------------------------------
-*/
-
-function serializeChartForAI(chart: SwissChart): string {
-  const planets = Object.values(chart.planets).map((planet) => ({
-    name: planet.name,
-
-    sign: planet.zodiac.sign,
-
-    degree: round(planet.zodiac.degree, 2),
-
-    longitude: round(planet.longitude, 2),
-
-    house: planet.house,
-
-    nakshatra: planet.nakshatra.name,
-
-    nakshatraLord: planet.nakshatra.lord,
-
-    pada: planet.nakshatra.pada,
-
-    retrograde: planet.retrograde ?? false,
-  }));
-
-  return JSON.stringify(
-    {
-      ascendant: {
-        sign: chart.ascendant.zodiac.sign,
-
-        degree: round(chart.ascendant.zodiac.degree, 2),
-
-        longitude: round(chart.ascendant.longitude, 2),
-      },
-
-      midheaven: {
-        sign: chart.midheaven.zodiac.sign,
-
-        degree: round(chart.midheaven.zodiac.degree, 2),
-
-        longitude: round(chart.midheaven.longitude, 2),
-      },
-
-      planets,
-
-      houses: chart.houses.map((house) => ({
-        house: house.house,
-
-        sign: house.zodiac.sign,
-
-        degree: round(house.zodiac.degree, 2),
-
-        longitude: round(house.longitude, 2),
-      })),
-
-      dasha: {
-        moonNakshatra: chart.dasha.moonNakshatra.name,
-
-        moonNakshatraLord: chart.dasha.moonNakshatra.lord,
-
-        currentMahadasha: chart.dasha.mahadasha,
-
-        currentAntardasha: chart.dasha.antardasha,
-
-        timeline: chart.dasha.timeline,
-      },
-
-      calculation: {
-        zodiac: chart.calculation.zodiac,
-
-        ayanamsa: chart.calculation.ayanamsa,
-
-        ayanamsaValue: chart.calculation.ayanamsaValue,
-
-        houseSystem: chart.calculation.houseSystem,
-      },
-    },
-    null,
-    2,
-  );
+  return false;
 }
 
 /*
@@ -1168,7 +449,7 @@ Use natural, fluent Hindi.
 English astrology terms may be used where
 they are clearer, for example:
 
-Mahadasha
+  Mahadasha
 Antardasha
 Ascendant
 Nakshatra
@@ -1273,14 +554,17 @@ IMPORTANT
 ==================================================
 
 The chart above contains calculated
-astrological facts.
+astrological facts (sidereal Lahiri zodiac,
+whole-sign houses, Vimshottari Dasha).
 
 Do not recalculate the chart from
 the birth details.
 
 Do not invent missing planetary
 positions, houses, Dashas, Nakshatras,
-yogas or aspects.
+yogas or aspects. Use only the planets,
+houses, house lords, dignities, aspects
+and Dasha periods supplied in the chart.
 
 Use the supplied chart as the source
 of astrological facts.
@@ -1295,8 +579,7 @@ connect.
 Be specific and personalized.
 
 Avoid generic horoscope language
-when chart-specific information
-is available.
+when chart-specific information is available.
 `;
 }
 
@@ -1348,6 +631,10 @@ Answer requirements:
   clearly.
 - Use Dasha timing when relevant.
 - Distinguish tendencies from guarantees.
+- Never predict death, serious illness or
+  exact event dates.
+- Do not give medical, legal or financial
+  instructions.
 - Do not expose internal reasoning.
 - Do not mention API, Gemini, Groq, backend,
   prompts, system rules, model names or
@@ -1393,6 +680,78 @@ function getGeminiApiKeys(): string[] {
 
 /*
 |--------------------------------------------------------------------------
+| GEMINI KEY NAMES
+|--------------------------------------------------------------------------
+|
+| We store only the environment-variable name in Redis.
+| The actual Gemini API key is NEVER stored in Redis.
+|--------------------------------------------------------------------------
+*/
+
+function getGeminiApiKeyEntries(): Array<{
+  name: string;
+  value: string;
+}> {
+  const entries = [
+    {
+      name: "GEMINI_API_KEY",
+      value: process.env.GEMINI_API_KEY,
+    },
+
+    {
+      name: "GEMINI_API_KEY1",
+      value: process.env.GEMINI_API_KEY1,
+    },
+
+    {
+      name: "GEMINI_API_KEY2",
+      value: process.env.GEMINI_API_KEY2,
+    },
+
+    {
+      name: "GEMINI_API_KEY3",
+      value: process.env.GEMINI_API_KEY3,
+    },
+
+    {
+      name: "GEMINI_API_KEY4",
+      value: process.env.GEMINI_API_KEY4,
+    },
+
+    {
+      name: "GEMINI_API_KEY5",
+      value: process.env.GEMINI_API_KEY5,
+    },
+  ];
+
+  const seen = new Set<string>();
+
+  return entries.filter((entry) => {
+    const value = entry.value?.trim();
+
+    if (!value) {
+      return false;
+    }
+
+    /*
+     * Keep the same deduplication behavior as the original
+     * getGeminiApiKeys() function.
+     */
+    if (seen.has(value)) {
+      return false;
+    }
+
+    seen.add(value);
+
+    return true;
+  }).map((entry) => ({
+    name: entry.name,
+    value: entry.value!.trim(),
+  }));
+}
+
+/*
+|--------------------------------------------------------------------------
 | GEMINI RESPONSE
 |--------------------------------------------------------------------------
 */
@@ -1433,7 +792,6 @@ function parseAstroAnswerPayload(text: string): AstroAnswerPayload {
     parsed = JSON.parse(cleaned);
   } catch {
     const start = cleaned.indexOf("{");
-
     const end = cleaned.lastIndexOf("}");
 
     if (start === -1 || end === -1 || end <= start) {
@@ -1462,7 +820,6 @@ function parseAstroAnswerPayload(text: string): AstroAnswerPayload {
 
   return {
     answer,
-
     conversationTopic: conversationTopic || "Vedic astrology",
   };
 }
@@ -1476,21 +833,8 @@ function parseAstroAnswerPayload(text: string): AstroAnswerPayload {
 function getGeminiErrorInfo(error: unknown): GeminiErrorInfo {
   return {
     status: getErrorStatus(error),
-
     message: getErrorMessage(error),
   };
-}
-
-function isRetryableGeminiStatus(status: number): boolean {
-  return (
-    status === 408 ||
-    status === 409 ||
-    status === 429 ||
-    status === 500 ||
-    status === 502 ||
-    status === 503 ||
-    status === 504
-  );
 }
 
 /*
@@ -1573,12 +917,12 @@ async function requestGemini(
       const message =
         typeof data === "object" && data !== null && "error" in data
           ? JSON.stringify(
-              (
-                data as {
-                  error?: unknown;
-                }
-              ).error,
-            )
+            (
+              data as {
+                error?: unknown;
+              }
+            ).error,
+          )
           : text;
 
       const error = new Error(
@@ -1602,25 +946,25 @@ async function requestGemini(
 
 /*
 |--------------------------------------------------------------------------
-| GEMINI FULL FALLBACK
+| GEMINI FULL FALLBACK + 12-HOUR KEY COOLDOWN
 |--------------------------------------------------------------------------
 |
-| 3.8
-|   -> key 1
-|   -> retry
-|   -> key 2
-|   -> retry
-|   -> ...
+| Model order:
 |
-| 3.7
-|   -> all keys
+| Primary model
+|   -> available Gemini keys
 |
-| 3.6
-|   -> all keys
+| Fallback model 1
+|   -> available Gemini keys
 |
-| THEN ONLY:
+| Fallback model 2
+|   -> available Gemini keys
 |
-| Groq
+| A key that receives a temporary/provider failure is
+| globally disabled for 12 hours.
+|
+| After Gemini is completely exhausted:
+|   -> Groq
 |--------------------------------------------------------------------------
 */
 
@@ -1631,76 +975,180 @@ async function requestGeminiWithKeyRotation(
   payload: AstroAnswerPayload;
   model: string;
 }> {
-  const apiKeys = getGeminiApiKeys();
+  /*
+   * Use the named entries here so we know which
+   * Redis health record belongs to each key.
+   */
+  const apiKeyEntries = getGeminiApiKeyEntries();
 
-  if (apiKeys.length === 0) {
+  if (apiKeyEntries.length === 0) {
     throw new Error("GEMINI_API_KEY_NOT_CONFIGURED");
+  }
+
+  /*
+   * Determine which keys are currently healthy.
+   *
+   * This happens once per request so a key that is
+   * globally cooling down is skipped completely.
+   */
+  const usableKeys: Array<{
+    name: string;
+    value: string;
+  }> = [];
+
+  for (const entry of apiKeyEntries) {
+    const health = await getGeminiKeyHealth(entry.name);
+
+    if (health && health.failedUntil > Date.now()) {
+      const remainingMinutes = Math.ceil(
+        (health.failedUntil - Date.now()) / 60_000,
+      );
+
+      console.warn(
+        `[Gemini] Skipping ${entry.name}; cooldown active for approximately ${remainingMinutes} minutes.`,
+      );
+
+      continue;
+    }
+
+    usableKeys.push(entry);
+  }
+
+  /*
+   * Every configured key is currently cooling down.
+   *
+   * Throw immediately so the caller moves to Groq.
+   */
+  if (usableKeys.length === 0) {
+    throw new Error("GEMINI_ALL_KEYS_COOLDOWN");
   }
 
   let lastError: unknown = null;
 
+  /*
+   * IMPORTANT:
+   *
+   * usableKeys is mutated when a key receives a
+   * cooldown-worthy failure.
+   *
+   * Therefore that key will NOT be tried against
+   * another Gemini model during this request.
+   */
   for (const model of GEMINI_MODEL_CHAIN) {
     console.log(`[Gemini] Trying model: ${model}`);
 
-    for (const apiKey of apiKeys) {
-      for (let attempt = 0; attempt <= MAX_GEMINI_RETRIES; attempt += 1) {
-        try {
-          const response = await requestGemini(
-            apiKey,
-            model,
-            systemPrompt,
-            question,
+    /*
+     * Snapshot the current usable keys.
+     */
+    const keysForModel = [...usableKeys];
+
+    for (const entry of keysForModel) {
+      /*
+       * The key may have been removed while another
+       * model/key combination was processing.
+       */
+      if (
+        !usableKeys.some(
+          (usableKey) => usableKey.name === entry.name,
+        )
+      ) {
+        continue;
+      }
+
+      try {
+        const response = await requestGemini(
+          entry.value,
+          model,
+          systemPrompt,
+          question,
+        );
+
+        const text = extractGeminiText(response);
+
+        if (!text) {
+          throw new Error("GEMINI_EMPTY_RESPONSE");
+        }
+
+        const payload = parseAstroAnswerPayload(text);
+
+        /*
+         * SUCCESS
+         *
+         * Clear any old health record for this key.
+         */
+        await clearGeminiKeyHealth(entry.name);
+
+        console.log(
+          `[Gemini] Success: ${model} using ${entry.name}`,
+        );
+
+        return {
+          payload,
+          model,
+        };
+      } catch (error) {
+        lastError = error;
+
+        const info = getGeminiErrorInfo(error);
+
+        console.warn(
+          `[Gemini] Failed model=${model}, key=${entry.name}, status=${info.status}: ${info.message}`,
+        );
+
+        /*
+         * Only temporary/provider/network failures
+         * cause the 12-hour global cooldown.
+         */
+        if (shouldCooldownGeminiKey(error)) {
+          const previousHealth = await getGeminiKeyHealth(
+            entry.name,
           );
 
-          const text = extractGeminiText(response);
-
-          if (!text) {
-            throw new Error("GEMINI_EMPTY_RESPONSE");
-          }
-
-          const payload = parseAstroAnswerPayload(text);
-
-          console.log(`[Gemini] Success: ${model}`);
-
-          return {
-            payload,
-            model,
-          };
-        } catch (error) {
-          lastError = error;
-
-          const info = getGeminiErrorInfo(error);
-
-          console.warn(
-            `[Gemini] Failed model=${model}, status=${info.status}, attempt=${attempt + 1}: ${info.message}`,
+          await setGeminiKeyHealth(
+            entry.name,
+            previousHealth,
+            info.message,
           );
 
           /*
-           * Non-retryable 4xx.
-           *
-           * Move to next key/model.
+           * Do not use this key against another model
+           * during the current request.
            */
-          if (
-            info.status >= 400 &&
-            info.status < 500 &&
-            info.status !== 408 &&
-            info.status !== 409 &&
-            info.status !== 429
-          ) {
-            break;
+          const index = usableKeys.findIndex(
+            (usableKey) => usableKey.name === entry.name,
+          );
+
+          if (index !== -1) {
+            usableKeys.splice(index, 1);
           }
 
-          if (!isRetryableGeminiStatus(info.status)) {
-            break;
-          }
-
-          if (attempt >= MAX_GEMINI_RETRIES) {
-            break;
-          }
-
-          await sleep(GEMINI_RETRY_DELAY_MS * (attempt + 1));
+          console.warn(
+            `[Gemini] ${entry.name} placed on 12-hour cooldown.`,
+          );
         }
+
+        /*
+         * For non-cooldown errors, simply continue.
+         *
+         * Example:
+         * 400 / 401 / 403
+         *
+         * These do NOT globally disable the key.
+         */
+        continue;
       }
+    }
+
+    /*
+     * If every key has now been placed on cooldown,
+     * stop trying Gemini models.
+     */
+    if (usableKeys.length === 0) {
+      console.warn(
+        "[Gemini] All Gemini keys are now on cooldown.",
+      );
+
+      break;
     }
   }
 
@@ -2034,13 +1482,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     const conversationKey = [
       profile.name,
-
       profile.dateOfBirth,
-
       profile.timeOfBirth,
-
       profile.placeOfBirth?.latitude,
-
       profile.placeOfBirth?.longitude,
     ]
       .map(String)
@@ -2164,12 +1608,6 @@ ${question}
         getErrorMessage(geminiError),
       );
 
-      /*
-      |--------------------------------------------------------------------------
-      | GROQ PROVIDER FALLBACK
-      |--------------------------------------------------------------------------
-      */
-
       try {
         const groqResult = await callGroq(
           buildGroqMessages(astrologyContext, answerInstruction, question),
@@ -2192,17 +1630,6 @@ ${question}
             },
             {
               status: 402,
-            },
-          );
-        }
-
-        if (groqMessage === "GROQ_API_KEY_NOT_CONFIGURED") {
-          return NextResponse.json(
-            {
-              error: getLocalizedError(language, "unavailable"),
-            },
-            {
-              status: 503,
             },
           );
         }

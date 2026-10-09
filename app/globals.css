@@ -520,7 +520,7 @@ select {
   min-height: 38px;
   border: 0;
   border-radius: 10px;
-  background: #273142;
+  background: linear-gradient(135deg, #9a72c9 0%, #6b4f8a 55%, #4d3470 100%);
   padding: 0 17px;
   color: #ffffff;
   cursor: pointer;
@@ -644,4 +644,101 @@ select {
   will-change: transform;
 
   animation: astroFeedbackControlJiggle 5s ease-in-out infinite;
+}
+
+/* Compact voice recording indicator */
+
+.astro-recording-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  border-radius: 50%;
+  background: #dc2626;
+  animation: astro-mic-pulse 1.2s ease-in-out infinite;
+}
+
+
+
+
+
+/* Microphone button */
+.astro-mic-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+  padding: 0;
+  border: 1px solid #bfdbfe;
+  border-radius: 50%;
+  background: #eff6ff;
+  color: #3b82f6;
+  cursor: pointer;
+  transition:
+    background 160ms ease,
+    color 160ms ease,
+    border-color 160ms ease,
+    transform 160ms ease;
+}
+
+.astro-mic-button svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.astro-mic-button:hover:not(:disabled) {
+  border-color: #93c5fd;
+  background: #dbeafe;
+  color: #2563eb;
+}
+
+.astro-mic-button:active:not(:disabled) {
+  transform: scale(0.95);
+}
+
+/* Recording state */
+.astro-mic-button.is-recording {
+  border-color: #dc2626;
+  background: #dc2626;
+  color: #fff;
+  animation: astro-mic-pulse 1.5s ease-in-out infinite;
+}
+
+.astro-mic-button.is-recording:hover:not(:disabled) {
+  border-color: #b91c1c;
+  background: #b91c1c;
+}
+
+.astro-mic-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.astro-mic-button:focus-visible {
+  outline: 2px solid #60a5fa;
+  outline-offset: 3px;
+}
+
+@keyframes astro-mic-pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.65;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .astro-mic-button,
+  .astro-recording-dot {
+    animation: none;
+    transition: none;
+  }
 }

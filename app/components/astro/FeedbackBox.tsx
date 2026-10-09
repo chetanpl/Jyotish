@@ -38,6 +38,11 @@ const improvementOptions: ImprovementKey[] = [
     "other",
 ];
 
+type FeedbackResponse = {
+    success?: boolean;
+    error?: string;
+};
+
 export default function FeedbackBox({
     t,
     sessionId,
@@ -47,17 +52,11 @@ export default function FeedbackBox({
     profile,
 }: FeedbackBoxProps) {
     const [helpful, setHelpful] = useState<boolean | null>(null);
-
     const [rating, setRating] = useState<number | null>(null);
-
     const [improvements, setImprovements] = useState<ImprovementKey[]>([]);
-
     const [comment, setComment] = useState("");
-
     const [sending, setSending] = useState(false);
-
     const [submitted, setSubmitted] = useState(false);
-
     const [error, setError] = useState("");
 
     function handleHelpfulChange(value: boolean): void {
@@ -81,14 +80,9 @@ export default function FeedbackBox({
     }
 
     async function handleSubmit(): Promise<void> {
-        /*
-         * Required:
-         * 1. Helpful / Not helpful
-         * 2. Rating
-         * 3. Message
-         *
-         * Improvements are optional.
-         */
+        if (sending || submitted) {
+            return;
+        }
 
         if (helpful === null) {
             setError(t.feedback.validationHelpful);
@@ -100,7 +94,9 @@ export default function FeedbackBox({
             return;
         }
 
-        if (!comment.trim()) {
+        const trimmedComment = comment.trim();
+
+        if (!trimmedComment) {
             setError(t.feedback.validationMessage);
             return;
         }
@@ -123,24 +119,31 @@ export default function FeedbackBox({
                     helpful,
                     rating,
                     improvements,
-                    comment: comment.trim(),
+                    comment: trimmedComment,
                 }),
             });
 
-            const data = (await response.json()) as {
-                success?: boolean;
-                error?: string;
-            };
+            let data: FeedbackResponse;
 
-            if (!response.ok || !data.success) {
+            try {
+                data = (await response.json()) as FeedbackResponse;
+            } catch {
+                throw new Error(t.feedback.saveError);
+            }
+
+            if (!response.ok || data.success !== true) {
                 throw new Error(data.error || t.feedback.saveError);
             }
 
             setSubmitted(true);
-        } catch (error: unknown) {
-            console.error("❌ FEEDBACK SUBMIT ERROR:", error);
+        } catch (submitError: unknown) {
+            console.error("Feedback submission failed:", submitError);
 
-            setError(error instanceof Error ? error.message : t.feedback.saveError);
+            setError(
+                submitError instanceof Error
+                    ? submitError.message
+                    : t.feedback.saveError,
+            );
         } finally {
             setSending(false);
         }
@@ -149,7 +152,9 @@ export default function FeedbackBox({
     if (submitted) {
         return (
             <div className="astro-feedback astro-feedback-success">
-                <div className="astro-feedback-success-icon">✓</div>
+                <div className="astro-feedback-success-icon" aria-hidden="true">
+                    ✓
+                </div>
 
                 <div>
                     <div className="astro-feedback-success-title">
@@ -168,23 +173,34 @@ export default function FeedbackBox({
         <div className="astro-feedback">
             <div className="astro-feedback-header">
                 <div>
-                    <h4 className="astro-feedback-title">{t.feedback.title}</h4>
+                    <h4 className="astro-feedback-title">
+                        {t.feedback.title}
+                    </h4>
 
-                    <p className="astro-feedback-subtitle">{t.feedback.subtitle}</p>
+                    <p className="astro-feedback-subtitle">
+                        {t.feedback.subtitle}
+                    </p>
                 </div>
             </div>
 
-            {/* Helpful / Not Helpful */}
+            {/* Helpful / Not helpful */}
             <div className="astro-feedback-reaction-row">
                 <button
                     type="button"
-                    className={`astro-feedback-reaction ${helpful === true ? "astro-feedback-reaction-active" : ""
-                        }`}
+                    className={`astro-feedback-reaction ${
+                        helpful === true
+                            ? "astro-feedback-reaction-active"
+                            : ""
+                    }`}
                     onClick={() => handleHelpfulChange(true)}
                     aria-label={t.feedback.helpful}
                     aria-pressed={helpful === true}
+                    disabled={sending}
                 >
-                    <span className="astro-feedback-reaction-icon" aria-hidden="true">
+                    <span
+                        className="astro-feedback-reaction-icon"
+                        aria-hidden="true"
+                    >
                         👍
                     </span>
 
@@ -193,13 +209,20 @@ export default function FeedbackBox({
 
                 <button
                     type="button"
-                    className={`astro-feedback-reaction ${helpful === false ? "astro-feedback-reaction-active" : ""
-                        }`}
+                    className={`astro-feedback-reaction ${
+                        helpful === false
+                            ? "astro-feedback-reaction-active"
+                            : ""
+                    }`}
                     onClick={() => handleHelpfulChange(false)}
                     aria-label={t.feedback.notHelpful}
                     aria-pressed={helpful === false}
+                    disabled={sending}
                 >
-                    <span className="astro-feedback-reaction-icon" aria-hidden="true">
+                    <span
+                        className="astro-feedback-reaction-icon"
+                        aria-hidden="true"
+                    >
                         👎
                     </span>
 
@@ -209,20 +232,26 @@ export default function FeedbackBox({
 
             {/* Rating */}
             <div className="astro-feedback-section">
-                <div className="astro-feedback-label">{t.feedback.ratingLabel}</div>
+                <div className="astro-feedback-label">
+                    {t.feedback.ratingLabel}
+                </div>
 
                 <div className="astro-feedback-stars">
                     {[1, 2, 3, 4, 5].map((star) => (
                         <button
                             key={star}
                             type="button"
-                            className={`astro-feedback-star ${rating !== null && star <= rating
+                            className={`astro-feedback-star ${
+                                rating !== null && star <= rating
                                     ? "astro-feedback-star-active"
                                     : ""
-                                }`}
+                            }`}
                             onClick={() => handleRatingChange(star)}
-                            aria-label={`${star}`}
+                            aria-label={`${star} ${
+                                star === 1 ? "star" : "stars"
+                            }`}
                             aria-pressed={rating === star}
+                            disabled={sending}
                         >
                             ★
                         </button>
@@ -230,7 +259,7 @@ export default function FeedbackBox({
                 </div>
             </div>
 
-            {/* Improvements - Optional */}
+            {/* Optional improvements */}
             <div className="astro-feedback-section">
                 <div className="astro-feedback-label">
                     {t.feedback.improvementLabel}
@@ -244,10 +273,14 @@ export default function FeedbackBox({
                             <button
                                 key={option}
                                 type="button"
-                                className={`astro-feedback-chip ${selected ? "astro-feedback-chip-active" : ""
-                                    }`}
+                                className={`astro-feedback-chip ${
+                                    selected
+                                        ? "astro-feedback-chip-active"
+                                        : ""
+                                }`}
                                 onClick={() => toggleImprovement(option)}
                                 aria-pressed={selected}
+                                disabled={sending}
                             >
                                 {t.feedback.improvements[option]}
                             </button>
@@ -256,7 +289,7 @@ export default function FeedbackBox({
                 </div>
             </div>
 
-            {/* Required Message */}
+            {/* Required message */}
             <div className="astro-feedback-section">
                 <label
                     htmlFor={`feedback-${messageId}`}
@@ -275,7 +308,13 @@ export default function FeedbackBox({
                     placeholder={t.feedback.messagePlaceholder}
                     rows={3}
                     maxLength={1000}
+                    required
+                    aria-invalid={Boolean(error)}
+                    aria-describedby={
+                        error ? "astro-feedback-error" : undefined
+                    }
                     className="astro-feedback-textarea"
+                    disabled={sending}
                 />
 
                 <div className="astro-feedback-character-count">
@@ -283,14 +322,18 @@ export default function FeedbackBox({
                 </div>
             </div>
 
-            {/* Validation message */}
+            {/* Validation / submission error */}
             {error && (
-                <div className="astro-feedback-error" role="alert">
+                <div
+                    id="astro-feedback-error"
+                    className="astro-feedback-error"
+                    role="alert"
+                >
                     {error}
                 </div>
             )}
 
-            {/* Button stays active unless request is being sent */}
+            {/* Submit */}
             <div className="astro-feedback-footer">
                 <button
                     type="button"
@@ -298,7 +341,9 @@ export default function FeedbackBox({
                     onClick={() => void handleSubmit()}
                     disabled={sending}
                 >
-                    {sending ? t.feedback.sending : t.feedback.send}
+                    {sending
+                        ? t.feedback.sending
+                        : t.feedback.send}
                 </button>
             </div>
         </div>

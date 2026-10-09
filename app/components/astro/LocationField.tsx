@@ -22,6 +22,11 @@ export default function LocationField({
   hasSuggestions,
   onChange,
 }: Props) {
+  const handleClear = () => {
+    onChange("");
+    inputRef.current?.focus();
+  };
+
   return (
     <div className="astro-field">
       <label
@@ -46,7 +51,9 @@ export default function LocationField({
           aria-controls="astro-location-list"
           aria-haspopup="listbox"
           aria-invalid={error !== null}
-          className={`astro-input w-full rounded-xl border bg-white px-4 py-3 pr-10 text-sm outline-none ${
+          className={`astro-input w-full rounded-xl border bg-white px-4 py-3 ${
+            value.trim() ? "pr-20" : "pr-10"
+          } text-sm outline-none ${
             loading
               ? "border-[#6b4f8a]/50"
               : selected
@@ -57,6 +64,21 @@ export default function LocationField({
           }`}
         />
 
+        {/* Clear button */}
+        {value.length > 0 && (
+          <button
+            type="button"
+            onClick={handleClear}
+            disabled={loading}
+            aria-label="Clear location"
+            title="Clear location"
+            className="absolute right-9 top-1/2 z-20 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full text-xl leading-none text-gray-500 transition hover:bg-gray-100 hover:text-gray-800 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            ×
+          </button>
+        )}
+
+        {/* Loading indicator */}
         {loading && (
           <div
             className="absolute right-3 top-1/2 z-10 flex h-7 w-7 -translate-y-1/2 items-center justify-center"
@@ -70,7 +92,8 @@ export default function LocationField({
           </div>
         )}
 
-        {!loading && selected && (
+        {/* Selected indicator */}
+        {!loading && selected && !value.trim() && (
           <div
             className="astro-success absolute right-3 top-1/2 z-10 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full bg-emerald-50 text-xs text-emerald-600"
             aria-hidden="true"
@@ -78,9 +101,20 @@ export default function LocationField({
             ✓
           </div>
         )}
+
+        {!loading && selected && value.trim() !== "" && (
+          <div
+            className="astro-success pointer-events-none absolute right-3 top-1/2 z-10 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full bg-emerald-50 text-xs text-emerald-600"
+            aria-hidden="true"
+          >
+            ✓
+          </div>
+        )}
       </div>
 
-      <p className="mt-2 text-[10px] text-[#98a0ad]">{t.profile.placeHelper}</p>
+      <p className="mt-2 text-[10px] text-[#98a0ad]">
+        {t.profile.placeHelper}
+      </p>
 
       {error && (
         <p className="mt-2 text-[11px] font-medium leading-4 text-rose-600">

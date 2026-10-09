@@ -133,6 +133,30 @@ export type UiText = {
     keyboardHint: string;
 
     footerOm: string;
+    questionAria: string;
+    cooldownLabel: string;
+    inputLabel: string;
+    sendTitle: string;
+  };
+
+  voice: {
+    start: string;
+    tapToStop:string;
+    stop: string;
+    listening: string;
+    cancel: string;
+    transcribing: string;
+    checkText: string;
+    recordingPlaceholder: string;
+    micHelp: string;
+    errors: {
+      unsupported: string;
+      denied: string;
+      noMic: string;
+      tooShort: string;
+      noSpeech: string;
+      failed: string;
+    };
   };
 
   validation: Record<ValidationKey, string>;
@@ -425,10 +449,11 @@ const ENGLISH_TEXT: UiText = {
       "Ask about your personality, career, relationships, marriage, finances, timing, or any other area of your life.",
 
     quickQuestions: [
-      "What are my strengths?",
-      "Tell me about my career",
-      "What does my Moon sign mean?",
-      "What about relationships?",
+      "When will I get married?",
+      "When will I get a job or achieve career success?",
+      "Will I end up with the person I love?",
+      "When will wealth and prosperity come into my life?",
+      "What does the near future hold for me?"
     ],
 
     thinkingTitle: "Reading your birth chart...",
@@ -450,7 +475,44 @@ const ENGLISH_TEXT: UiText = {
     keyboardHint: "Press Enter to send · Shift + Enter for a new line",
 
     footerOm: "Om Shanti",
+    questionAria: "Type your question",
+    cooldownLabel: "You can ask your next question in",
+
+    inputLabel: "Type your question",
+
+    sendTitle: "Send question",
   },
+  voice: {
+    start: "Start voice recording",
+      tapToStop: "Tap the microphone to finish recording…",
+    stop: "Stop recording and transcribe",
+
+    listening: "Listening…",
+
+    cancel: "Cancel recording",
+
+    transcribing: "Turning your voice into text…",
+
+    checkText: "Please check the text, especially names, before sending.",
+
+    recordingPlaceholder: "Tap the microphone to finish recording…",
+
+    micHelp:"If microphone access is blocked, enable it in your browser's site settings.",
+    errors: {
+      unsupported: "Your browser does not support voice recording.",
+
+      denied: "Microphone permission was denied.",
+
+      noMic: "No microphone was found.",
+
+      tooShort: "The recording is too short. Please speak again.",
+
+      noSpeech: "Could not hear any speech. Please try again.",
+
+      failed: "Could not convert your voice to text. Please try again or type.",
+    },
+  },
+
 
   validation: {
     questionRequired: "Please enter a question.",
@@ -630,10 +692,11 @@ const HINDI_TEXT: UiText = {
       "अपने व्यक्तित्व, करियर, रिश्तों, विवाह, धन, समय या जीवन के किसी भी पहलू के बारे में प्रश्न पूछें।",
 
     quickQuestions: [
-      "मेरी शक्तियाँ क्या हैं?",
-      "मेरे करियर के बारे में बताएं",
-      "मेरी चंद्र राशि का क्या अर्थ है?",
-      "मेरे रिश्तों के बारे में बताएं",
+      "मेरी शादी कब होगी?",
+      "मुझे नौकरी कब मिलेगी या करियर में सफलता कब मिलेगी?",
+      "क्या मेरा प्यार मुझे मिलेगा?",
+      "मेरे जीवन में धन और समृद्धि कब आएगी?",
+      "मेरा आने वाला समय कैसा रहेगा?"
     ],
 
     thinkingTitle: "कुंडली का विश्लेषण हो रहा है...",
@@ -656,101 +719,125 @@ const HINDI_TEXT: UiText = {
       "Enter दबाएँ संदेश भेजने के लिए · Shift + Enter नई लाइन के लिए",
 
     footerOm: "ॐ शान्तिः",
+
+    cooldownLabel: "अगला प्रश्न पूछने के लिए प्रतीक्षा करें",
+inputLabel: "अपना प्रश्न लिखें",
+    questionAria: "अपना प्रश्न लिखें",
+
+    sendTitle: "प्रश्न भेजें",
   },
-
-  validation: {
-    questionRequired: "कृपया अपना प्रश्न लिखें।",
-
-    nameRequired: "कृपया पहले अपना नाम लिखें।",
-
-    dateRequired: "कृपया अपनी जन्म तारीख चुनें।",
-
-    timeRequired: "कृपया अपना जन्म समय चुनें।",
-
-    locationRequired: "कृपया अपना सही जन्म स्थान चुनें।",
+  voice: {
+    start: "वॉइस रिकॉर्डिंग शुरू करें",
+    stop: "रिकॉर्डिंग रोकें और टेक्स्ट बनाएँ",
+    tapToStop: "रिकॉर्डिंग रोकने के लिए माइक्रोफ़ोन दबाएँ…",
+    listening: "सुन रहा है…",
+    cancel: "रिकॉर्डिंग रद्द करें",
+    transcribing: "आपकी आवाज़ को टेक्स्ट में बदला जा रहा है…",
+    checkText: "कृपया टेक्स्ट जाँच लें, खासकर नाम, फिर भेजें।",
+    recordingPlaceholder: "रिकॉर्डिंग रोकने के लिए माइक्रोफ़ोन दबाएँ…",
+    micHelp: "अगर माइक्रोफ़ोन की अनुमति बंद है, तो ब्राउज़र की साइट सेटिंग में उसे चालू करें।",
+    errors: {
+      unsupported: "आपका ब्राउज़र वॉइस रिकॉर्डिंग सपोर्ट नहीं करता।",
+      denied: "माइक्रोफ़ोन की अनुमति नहीं मिली।",
+      noMic: "कोई माइक्रोफ़ोन नहीं मिला।",
+      tooShort: "रिकॉर्डिंग बहुत छोटी है। कृपया दोबारा बोलें।",
+      noSpeech: "आवाज़ साफ़ नहीं सुनाई दी। कृपया दोबारा बोलें।",
+      failed: "आवाज़ को टेक्स्ट में नहीं बदला जा सका। कृपया दोबारा प्रयास करें या टाइप करें।",
+    },
   },
+    validation: {
+      questionRequired: "कृपया अपना प्रश्न लिखें।",
 
-  errors: {
-    timezone: "समय क्षेत्र निर्धारित नहीं हो सका।",
+      nameRequired: "कृपया पहले अपना नाम लिखें।",
 
-    chat: "ज्योतिषीय उत्तर प्राप्त नहीं हो सका।",
+      dateRequired: "कृपया अपनी जन्म तारीख चुनें।",
 
-    generic: "कुछ गलत हो गया। कृपया दोबारा प्रयास करें।",
+      timeRequired: "कृपया अपना जन्म समय चुनें।",
 
-    emptyAnswer: "उत्तर तैयार नहीं हो सका।",
-  },
-
-  feedback: {
-    title: "यह उत्तर कैसा लगा?",
-
-    subtitle:
-      "कृपया उपयोगी या उपयोगी नहीं चुनें, रेटिंग दें और अपना संदेश लिखें।",
-
-    helpful: "उपयोगी",
-
-    notHelpful: "उपयोगी नहीं",
-
-    ratingLabel: "इस उत्तर को रेट करें",
-
-    improvementLabel: "क्या बेहतर किया जा सकता है?",
-
-    improvements: {
-      specific: "अधिक विशिष्ट",
-
-      detailed: "अधिक विस्तृत",
-
-      explanation: "बेहतर व्याख्या",
-
-      timing: "बेहतर समय",
-
-      easier: "समझने में आसान",
-
-      other: "अन्य",
+      locationRequired: "कृपया अपना सही जन्म स्थान चुनें।",
     },
 
-    messageLabel: "अपनी राय बताएं",
+    errors: {
+      timezone: "समय क्षेत्र निर्धारित नहीं हो सका।",
 
-    messagePlaceholder:
-      "इस उत्तर को बेहतर बनाने के लिए क्या किया जा सकता है?",
+      chat: "ज्योतिषीय उत्तर प्राप्त नहीं हो सका।",
 
-    send: "फीडबैक भेजें",
+      generic: "कुछ गलत हो गया। कृपया दोबारा प्रयास करें।",
 
-    sending: "भेजा जा रहा है...",
+      emptyAnswer: "उत्तर तैयार नहीं हो सका।",
+    },
 
-    validationHelpful:
-      "कृपया उपयोगी या उपयोगी नहीं में से एक चुनें।",
+    feedback: {
+      title: "यह उत्तर कैसा लगा?",
 
-    validationRating:
-      "कृपया 1 से 5 स्टार की रेटिंग चुनें।",
+      subtitle:
+        "कृपया उपयोगी या उपयोगी नहीं चुनें, रेटिंग दें और अपना संदेश लिखें।",
 
-    validationMessage:
-      "कृपया अपने फीडबैक के बारे में संदेश लिखें।",
+      helpful: "उपयोगी",
 
-    successTitle: "आपके फीडबैक के लिए धन्यवाद",
+      notHelpful: "उपयोगी नहीं",
 
-    successMessage:
-      "आपका फीडबैक AstroAI को बेहतर बनाने में मदद करता है।",
+      ratingLabel: "इस उत्तर को रेट करें",
 
-    saveError:
-      "फीडबैक सेव नहीं हो सका। कृपया दोबारा प्रयास करें।",
-  },
+      improvementLabel: "क्या बेहतर किया जा सकता है?",
 
-  footer: {
-    description: "आत्म-चिंतन और मार्गदर्शन के लिए वैदिक ज्योतिष की व्याख्या।",
+      improvements: {
+        specific: "अधिक विशिष्ट",
 
-    disclaimer:
-      "AstroAI वैदिक ज्योतिष की व्याख्या केवल जानकारी और मनोरंजन के उद्देश्य से प्रदान करता है। ज्योतिष निश्चित भविष्यवाणी नहीं है और इसे चिकित्सा, कानूनी, वित्तीय या किसी अन्य पेशेवर सलाह के रूप में नहीं माना जाना चाहिए।",
+        detailed: "अधिक विस्तृत",
 
-    right: "मार्गदर्शन और आत्म-चिंतन के लिए, निश्चित भविष्यवाणी नहीं।",
+        explanation: "बेहतर व्याख्या",
 
-    poweredBy: "Powered by InfoWithPal",
-  },
-};
+        timing: "बेहतर समय",
 
-export const UI_TEXT: Record<AnswerLanguage, UiText> = {
-  en: ENGLISH_TEXT,
-  hi: HINDI_TEXT,
-};
+        easier: "समझने में आसान",
+
+        other: "अन्य",
+      },
+
+      messageLabel: "अपनी राय बताएं",
+
+      messagePlaceholder:
+        "इस उत्तर को बेहतर बनाने के लिए क्या किया जा सकता है?",
+
+      send: "फीडबैक भेजें",
+
+      sending: "भेजा जा रहा है...",
+
+      validationHelpful:
+        "कृपया उपयोगी या उपयोगी नहीं में से एक चुनें।",
+
+      validationRating:
+        "कृपया 1 से 5 स्टार की रेटिंग चुनें।",
+
+      validationMessage:
+        "कृपया अपने फीडबैक के बारे में संदेश लिखें।",
+
+      successTitle: "आपके फीडबैक के लिए धन्यवाद",
+
+      successMessage:
+        "आपका फीडबैक AstroAI को बेहतर बनाने में मदद करता है।",
+
+      saveError:
+        "फीडबैक सेव नहीं हो सका। कृपया दोबारा प्रयास करें।",
+    },
+
+    footer: {
+      description: "आत्म-चिंतन और मार्गदर्शन के लिए वैदिक ज्योतिष की व्याख्या।",
+
+      disclaimer:
+        "AstroAI वैदिक ज्योतिष की व्याख्या केवल जानकारी और मनोरंजन के उद्देश्य से प्रदान करता है। ज्योतिष निश्चित भविष्यवाणी नहीं है और इसे चिकित्सा, कानूनी, वित्तीय या किसी अन्य पेशेवर सलाह के रूप में नहीं माना जाना चाहिए।",
+
+      right: "मार्गदर्शन और आत्म-चिंतन के लिए, निश्चित भविष्यवाणी नहीं।",
+
+      poweredBy: "Powered by InfoWithPal",
+    },
+  };
+
+  export const UI_TEXT: Record<AnswerLanguage, UiText> = {
+    en: ENGLISH_TEXT,
+    hi: HINDI_TEXT,
+  };
 
 export function getUiText(language: AnswerLanguage): UiText {
   return UI_TEXT[language];

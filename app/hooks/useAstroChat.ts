@@ -71,9 +71,9 @@ function normalizeForValidation(value: string): string {
 function containsBlockedWord(value: string): boolean {
   const normalized = normalizeForValidation(value);
 
-  if (!normalized) {
-    return false;
-  }
+  // if (!normalized) {
+  //   return false;
+  // }
 
   const words = normalized.split(" ");
 
@@ -81,7 +81,9 @@ function containsBlockedWord(value: string): boolean {
 }
 
 function hasTooManyConsecutiveSpecialCharacters(value: string): boolean {
-  return /[^a-zA-Z0-9\s]{3,}/.test(value);
+  // Letters (kisi bhi language ke), matras, digits aur spaces allowed.
+  // Sirf asli symbols (!@#$%... ) ginte jayenge.
+  return /[^\p{L}\p{M}\p{N}\s]{4,}/u.test(value);
 }
 
 function validateUserInput(value: string): string | null {

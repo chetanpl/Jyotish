@@ -22,12 +22,29 @@ type Options = {
   updateProfile: UpdateBirthProfile;
   /** Called whenever the user interacts with the location field (clears validation errors). */
   onInteraction: () => void;
+  /** Optional ISO country code (e.g. "in") to restrict the search. */
+  country?: string;
 };
+
+/* ------------------------------------------------------------------ */
+/* REQUEST CONTROL SETTINGS                                            */
+/* ------------------------------------------------------------------ */
+
+const SEARCH_URL = "/api/location/search";
+const MIN_QUERY_LENGTH = 3; // route.ts bhi 3 se kam par kuch nahi deta
+const DEBOUNCE_MS = 500; // typing rukne ke itni der baad hi request
+const COOLDOWN_MS = 60_000; // 403/429 aane par itni der koi request nahi
+const CACHE_LIMIT = 50;
+
+const BUSY_MESSAGE =
+  "Location service is busy. Please try again in a minute.";
+const FAILED_MESSAGE = "Could not search locations. Please try again.";
 
 export function useLocationSearch({
   profile,
   updateProfile,
   onInteraction,
+  country,
 }: Options) {
   const [locationText, setLocationText] = useState("");
   const [suggestions, setSuggestions] = useState<LocationSuggestion[]>([]);
@@ -37,7 +54,6 @@ export function useLocationSearch({
     useState<LocationPopupPosition | null>(null);
 
   const locationInputRef = useRef<HTMLInputElement | null>(null);
-
   const locationAbortRef = useRef<AbortController | null>(null);
 
   /*
@@ -45,6 +61,12 @@ export function useLocationSearch({
    * until the user explicitly edits the field again.
    */
   const locationSearchSuppressedRef = useRef(false);
+
+  /* Same query dobara type karne par server ko request nahi jayegi. */
+  const cacheRef = useRef(new Map<string, LocationSuggestion[]>());
+
+  /* Server 403/429 de to is time tak koi request nahi. */
+  const blockedUntilRef = useRef(0);
 
   const locationValue = locationText || profile.placeOfBirth?.displayName || "";
 
@@ -67,15 +89,7 @@ export function useLocationSearch({
   }, []);
 
   /*
-   * Location search
-   *
-   * This still uses your existing location search endpoint
-   * because the search endpoint provides:
-   *   - placeId
-   *   - name
-   *   - displayName
-   *   - latitude
-   *   - longitude
+   * Location search (debounced, abortable, cached, rate-limit aware).
    *
    * Timezone lookup is NOT done here.
    */
@@ -84,9 +98,37 @@ export function useLocationSearch({
 
     if (
       locationSearchSuppressedRef.current ||
-      query.length < 2 ||
+      query.length < MIN_QUERY_LENGTH ||
       profile.placeOfBirth !== null
     ) {
+      return;
+    }
+
+    const cacheKey = `${country ?? ""}|${query.toLowerCase()}`;
+
+    /* 1) Cache hit: request nahi bhejni. */
+    const cached = cacheRef.current.get(cacheKey);
+
+    if (cached) {
+      setSuggestions(cached);
+      setLocationLoading(false);
+      setLocationError(null);
+
+      if (cached.length > 0) {
+        updateLocationPopupPosition();
+      } else {
+        setLocationPopupPosition(null);
+      }
+
+      return;
+    }
+
+    /* 2) Cooldown: server ne block kiya tha, hammer mat karo. */
+    if (Date.now() < blockedUntilRef.current) {
+      setSuggestions([]);
+      setLocationLoading(false);
+      setLocationPopupPosition(null);
+      setLocationError(BUSY_MESSAGE);
       return;
     }
 
@@ -94,31 +136,45 @@ export function useLocationSearch({
 
     locationAbortRef.current = controller;
 
+    const showError = (message: string): void => {
+      setSuggestions([]);
+      setLocationLoading(false);
+      setLocationPopupPosition(null);
+      setLocationError(message);
+    };
+
     const timeoutId = window.setTimeout(async () => {
       if (locationSearchSuppressedRef.current || controller.signal.aborted) {
         return;
       }
 
       try {
-        const response = await fetch(
-          `/api/location/search?q=${encodeURIComponent(query)}`,
-          {
-            method: "GET",
-            headers: {
-              Accept: "application/json",
-            },
-            signal: controller.signal,
+        const params = new URLSearchParams({ q: query });
+
+        if (country) {
+          params.set("country", country);
+        }
+
+        const response = await fetch(`${SEARCH_URL}?${params.toString()}`, {
+          method: "GET",
+          headers: {
+            Accept: "application/json",
           },
-        );
+          signal: controller.signal,
+        });
 
         if (controller.signal.aborted || locationSearchSuppressedRef.current) {
           return;
         }
 
+        if (response.status === 403 || response.status === 429) {
+          blockedUntilRef.current = Date.now() + COOLDOWN_MS;
+          showError(BUSY_MESSAGE);
+          return;
+        }
+
         if (!response.ok) {
-          setSuggestions([]);
-          setLocationLoading(false);
-          setLocationPopupPosition(null);
+          showError(FAILED_MESSAGE);
           return;
         }
 
@@ -130,8 +186,20 @@ export function useLocationSearch({
 
         const normalized = extractLocationSuggestions(payload);
 
+        /* Cache mein save (purana entry hata kar limit rakho). */
+        if (cacheRef.current.size >= CACHE_LIMIT) {
+          const oldest = cacheRef.current.keys().next().value;
+
+          if (oldest !== undefined) {
+            cacheRef.current.delete(oldest);
+          }
+        }
+
+        cacheRef.current.set(cacheKey, normalized);
+
         setSuggestions(normalized);
         setLocationLoading(false);
+        setLocationError(null);
 
         if (normalized.length > 0) {
           updateLocationPopupPosition();
@@ -149,11 +217,9 @@ export function useLocationSearch({
 
         console.error("Location search failed:", error);
 
-        setSuggestions([]);
-        setLocationLoading(false);
-        setLocationPopupPosition(null);
+        showError(FAILED_MESSAGE);
       }
-    }, 450);
+    }, DEBOUNCE_MS);
 
     return () => {
       window.clearTimeout(timeoutId);
@@ -164,7 +230,7 @@ export function useLocationSearch({
         locationAbortRef.current = null;
       }
     };
-  }, [locationText, profile.placeOfBirth, updateLocationPopupPosition]);
+  }, [locationText, profile.placeOfBirth, country, updateLocationPopupPosition]);
 
   /*
    * Keep location dropdown positioned correctly.
@@ -224,7 +290,7 @@ export function useLocationSearch({
       updateProfile("placeOfBirth", null);
     }
 
-    if (value.trim().length >= 2) {
+    if (value.trim().length >= MIN_QUERY_LENGTH) {
       setLocationLoading(true);
 
       window.requestAnimationFrame(() => {
@@ -238,11 +304,8 @@ export function useLocationSearch({
   /*
    * Select location.
    *
-   * IMPORTANT:
    * There is NO /api/location/timezone request here.
-   *
-   * tz-lookup calculates the timezone locally
-   * from latitude + longitude.
+   * The timezone is calculated locally from latitude + longitude.
    */
   async function selectLocation(suggestion: LocationSuggestion): Promise<void> {
     // Immediately suppress any pending/new
@@ -260,14 +323,6 @@ export function useLocationSearch({
     onInteraction();
 
     try {
-      /*
-       * Resolve timezone locally.
-       *
-       * Example:
-       * Delhi coordinates -> Asia/Kolkata
-       * London coordinates -> Europe/London
-       * New York coordinates -> America/New_York
-       */
       const timezone = getTimezoneFromCoordinates(
         suggestion.latitude,
         suggestion.longitude,
