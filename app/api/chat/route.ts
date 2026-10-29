@@ -85,25 +85,43 @@ type RedisResponse<T = unknown> = {
 |--------------------------------------------------------------------------
 */
 
-const MODEL = process.env.GEMINI_MODEL?.trim() || "gemini-3.8-flash";
+const DEFAULT_MODEL = "gemini-3.8-flash";
+
+const isDeprecatedGeminiModel = (model: string): boolean =>
+  /^gemini-3\.7(?:-|$)/i.test(model.trim());
+
+const configuredModel = process.env.GEMINI_MODEL?.trim();
+
+const MODEL =
+  configuredModel && !isDeprecatedGeminiModel(configuredModel)
+    ? configuredModel
+    : DEFAULT_MODEL;
 
 const GEMINI_FALLBACK_MODELS = [
-  process.env.GEMINI_FALLBACK_MODEL_1?.trim() || "gemini-3.7-flash",
-  process.env.GEMINI_FALLBACK_MODEL_2?.trim() || "gemini-3.6-flash",
-].filter(Boolean);
+  process.env.GEMINI_FALLBACK_MODEL_1?.trim() || "gemini-3.6-flash",
+  process.env.GEMINI_FALLBACK_MODEL_2?.trim() || "gemini-3.5-flash",
+].filter((model) => Boolean(model) && !isDeprecatedGeminiModel(model));
 
-const GEMINI_MODEL_CHAIN = [
-  MODEL,
-  ...GEMINI_FALLBACK_MODELS.filter((model) => model !== MODEL),
-];
+const GEMINI_MODEL_CHAIN = [...new Set([MODEL, ...GEMINI_FALLBACK_MODELS])];
 
-const MAX_OUTPUT_TOKENS = 6144;
+const MAX_OUTPUT_TOKENS = 8192;
 
 const MAX_SUMMARY_CHARS = 5000;
 
 const MAX_CONVERSATION_TOPIC_CHARS = 1800;
 
-const GEMINI_TIMEOUT_MS = 45_000;
+/*
+ * Ek Gemini request ke liye max wait time.
+ * Env se badal sakte ho: GEMINI_TIMEOUT_MS=30000
+ */
+const GEMINI_TIMEOUT_MS = Number(process.env.GEMINI_TIMEOUT_MS) || 35_000;
+
+/*
+ * Ek model pe ek user message ke liye max kitni keys try hongi.
+ * Agar Gemini slow ho to saari keys 25-25 second wait na karein.
+ * Env se badal sakte ho: GEMINI_MAX_KEYS_PER_MODEL=6
+ */
+const MAX_KEYS_PER_MODEL = Number(process.env.GEMINI_MAX_KEYS_PER_MODEL) || 4;
 
 const MAX_MESSAGES = 100;
 
@@ -111,13 +129,30 @@ const MAX_MESSAGE_LENGTH = 6000;
 
 /*
 |--------------------------------------------------------------------------
-| 12-HOUR GEMINI KEY COOLDOWN
+| GEMINI KEY + MODEL COOLDOWN
+|--------------------------------------------------------------------------
+|
+| - 429 (quota) aur invalid key: 24 hours 30 minutes
+| - 503, timeout, network, 5xx: 3 minutes
 |--------------------------------------------------------------------------
 */
 
-const GEMINI_KEY_COOLDOWN_MS = 12 * 60 * 60 * 1000;
+const GEMINI_QUOTA_COOLDOWN_MS = 24 * 60 * 60 * 1000 + 30 * 60 * 1000;
+const GEMINI_TEMP_COOLDOWN_MS = 3 * 60 * 1000;
+const REDIS_TTL_EXTRA_MS = 20 * 60 * 1000;
 
 const GEMINI_HEALTH_PREFIX = "gemini:key-health:";
+
+/*
+ * Invalid key ke liye model-independent health name.
+ * Key ek baar invalid nikle to saare models ke liye skip hoti hai.
+ */
+const INVALID_KEY_HEALTH_MODEL = "__all_models__";
+
+/*
+ * Model-wide problem (jaise 503 high demand) ke liye health name.
+ */
+const MODEL_HEALTH_KEY_NAME = "__model__";
 
 /*
  * Local fallback.
@@ -133,9 +168,7 @@ const localGeminiHealth = new Map<string, GeminiKeyHealth>();
 |--------------------------------------------------------------------------
 */
 
-async function redisCommand<T = unknown>(
-  command: string[],
-): Promise<T | null> {
+async function redisCommand<T = unknown>(command: string[]): Promise<T | null> {
   const url = process.env.UPSTASH_REDIS_REST_URL?.trim();
 
   const token = process.env.UPSTASH_REDIS_REST_TOKEN?.trim();
@@ -164,9 +197,7 @@ async function redisCommand<T = unknown>(
     });
 
     if (!response.ok) {
-      console.error(
-        `[Gemini Health] Redis request failed: ${response.status}`,
-      );
+      console.error(`[Gemini Health] Redis request failed: ${response.status}`);
 
       return null;
     }
@@ -190,18 +221,20 @@ async function redisCommand<T = unknown>(
   }
 }
 
-function getGeminiHealthKey(keyName: string): string {
-  return `${GEMINI_HEALTH_PREFIX}${keyName}`;
+function getGeminiHealthName(keyName: string, model: string): string {
+  return `${keyName}:${model}`;
+}
+
+function getGeminiHealthKey(healthName: string): string {
+  return `${GEMINI_HEALTH_PREFIX}${healthName}`;
 }
 
 async function getGeminiKeyHealth(
-  keyName: string,
+  healthName: string,
 ): Promise<GeminiKeyHealth | null> {
-  const redisKey = getGeminiHealthKey(keyName);
-
   const redisValue = await redisCommand<string>([
     "GET",
-    redisKey,
+    getGeminiHealthKey(healthName),
   ]);
 
   if (redisValue) {
@@ -212,39 +245,26 @@ async function getGeminiKeyHealth(
         typeof parsed.failedUntil === "number" &&
         typeof parsed.failureCount === "number"
       ) {
-        /*
-         * Cooldown still active.
-         */
         if (parsed.failedUntil > Date.now()) {
           return parsed;
         }
 
-        /*
-         * Cooldown expired.
-         */
-        await clearGeminiKeyHealth(keyName);
-
+        await clearGeminiKeyHealth(healthName);
         return null;
       }
     } catch {
-      console.warn(
-        `[Gemini Health] Invalid Redis data for ${keyName}`,
-      );
+      console.warn(`[Gemini Health] Invalid Redis data for ${healthName}`);
     }
   }
 
-  /*
-   * Local fallback.
-   */
-  const localValue = localGeminiHealth.get(keyName);
+  const localValue = localGeminiHealth.get(healthName);
 
   if (!localValue) {
     return null;
   }
 
   if (localValue.failedUntil <= Date.now()) {
-    localGeminiHealth.delete(keyName);
-
+    localGeminiHealth.delete(healthName);
     return null;
   }
 
@@ -252,57 +272,31 @@ async function getGeminiKeyHealth(
 }
 
 async function setGeminiKeyHealth(
-  keyName: string,
+  healthName: string,
   previous: GeminiKeyHealth | null,
   errorMessage: string,
+  cooldownMs: number,
 ): Promise<void> {
-  const failedUntil = Date.now() + GEMINI_KEY_COOLDOWN_MS;
-
   const health: GeminiKeyHealth = {
-    failedUntil,
-
+    failedUntil: Date.now() + cooldownMs,
     failureCount: (previous?.failureCount ?? 0) + 1,
-
     lastError: clampString(errorMessage, 500),
   };
 
-  /*
-   * Always update local state.
-   */
-  localGeminiHealth.set(keyName, health);
-
-  /*
-   * Persist globally in Redis.
-   */
-  const redisKey = getGeminiHealthKey(keyName);
-
-  const ttlSeconds = Math.ceil(
-    GEMINI_KEY_COOLDOWN_MS / 1000,
-  );
+  localGeminiHealth.set(healthName, health);
 
   await redisCommand([
     "SET",
-
-    redisKey,
-
+    getGeminiHealthKey(healthName),
     JSON.stringify(health),
-
     "EX",
-
-    String(ttlSeconds),
+    String(Math.max(1, Math.ceil((cooldownMs + REDIS_TTL_EXTRA_MS) / 1000))),
   ]);
 }
 
-async function clearGeminiKeyHealth(
-  keyName: string,
-): Promise<void> {
-  localGeminiHealth.delete(keyName);
-
-  await redisCommand([
-    "DEL",
-
-    getGeminiHealthKey(keyName),
-  ]);
+async function clearGeminiKeyHealth(healthName: string): Promise<void> {
+  localGeminiHealth.delete(healthName);
+  await redisCommand(["DEL", getGeminiHealthKey(healthName)]);
 }
 
 /*
@@ -363,7 +357,7 @@ function getErrorStatus(error: unknown): number {
 
 /*
 |--------------------------------------------------------------------------
-| GEMINI COOLDOWN DECISION
+| GEMINI ERROR CLASSIFICATION
 |--------------------------------------------------------------------------
 */
 
@@ -406,6 +400,46 @@ function shouldCooldownGeminiKey(error: unknown): boolean {
   }
 
   return false;
+}
+
+/*
+ * 429 (quota) pe lamba cooldown, baaki temporary errors pe chhota.
+ */
+function getCooldownMs(error: unknown): number {
+  return getErrorStatus(error) === 429
+    ? GEMINI_QUOTA_COOLDOWN_MS
+    : GEMINI_TEMP_COOLDOWN_MS;
+}
+
+/*
+ * Key hi invalid/revoked hai (400 API_KEY_INVALID, 401, 403).
+ * Ye key kisi bhi model pe kaam nahi karegi.
+ */
+function isInvalidKeyError(error: unknown): boolean {
+  const status = getErrorStatus(error);
+  const message = getErrorMessage(error);
+
+  return (
+    status === 401 ||
+    status === 403 ||
+    message.includes("API_KEY_INVALID") ||
+    message.includes("API key not valid")
+  );
+}
+
+/*
+ * Model ka naam galat ya available nahi hai.
+ */
+function isModelNotFoundError(error: unknown): boolean {
+  return getErrorStatus(error) === 404;
+}
+
+/*
+ * 503 "high demand" model-wide hota hai, key ki galti nahi.
+ * Isliye baaki keys try karne ki jagah seedha next model pe jaao.
+ */
+function isModelOverloadedError(error: unknown): boolean {
+  return getErrorStatus(error) === 503;
 }
 
 /*
@@ -655,31 +689,6 @@ horoscope.
 
 /*
 |--------------------------------------------------------------------------
-| GEMINI API KEYS
-|--------------------------------------------------------------------------
-*/
-
-function getGeminiApiKeys(): string[] {
-  const keys = [
-    process.env.GEMINI_API_KEY,
-    process.env.GEMINI_API_KEY1,
-    process.env.GEMINI_API_KEY2,
-    process.env.GEMINI_API_KEY3,
-    process.env.GEMINI_API_KEY4,
-    process.env.GEMINI_API_KEY5,
-  ];
-
-  return [
-    ...new Set(
-      keys
-        .map((key) => key?.trim())
-        .filter((key): key is string => Boolean(key)),
-    ),
-  ];
-}
-
-/*
-|--------------------------------------------------------------------------
 | GEMINI KEY NAMES
 |--------------------------------------------------------------------------
 |
@@ -692,62 +701,29 @@ function getGeminiApiKeyEntries(): Array<{
   name: string;
   value: string;
 }> {
-  const entries = [
-    {
-      name: "GEMINI_API_KEY",
-      value: process.env.GEMINI_API_KEY,
-    },
-
-    {
-      name: "GEMINI_API_KEY1",
-      value: process.env.GEMINI_API_KEY1,
-    },
-
-    {
-      name: "GEMINI_API_KEY2",
-      value: process.env.GEMINI_API_KEY2,
-    },
-
-    {
-      name: "GEMINI_API_KEY3",
-      value: process.env.GEMINI_API_KEY3,
-    },
-
-    {
-      name: "GEMINI_API_KEY4",
-      value: process.env.GEMINI_API_KEY4,
-    },
-
-    {
-      name: "GEMINI_API_KEY5",
-      value: process.env.GEMINI_API_KEY5,
-    },
-  ];
+  const names = Object.keys(process.env)
+    .filter((name) => /^GEMINI_API_KEY\d*$/.test(name))
+    .sort((a, b) => {
+      const aIndex = Number(a.replace("GEMINI_API_KEY", "") || 0);
+      const bIndex = Number(b.replace("GEMINI_API_KEY", "") || 0);
+      return aIndex - bIndex;
+    });
 
   const seen = new Set<string>();
+  const entries: Array<{ name: string; value: string }> = [];
 
-  return entries.filter((entry) => {
-    const value = entry.value?.trim();
+  for (const name of names) {
+    const value = process.env[name]?.trim();
 
-    if (!value) {
-      return false;
-    }
-
-    /*
-     * Keep the same deduplication behavior as the original
-     * getGeminiApiKeys() function.
-     */
-    if (seen.has(value)) {
-      return false;
+    if (!value || seen.has(value)) {
+      continue;
     }
 
     seen.add(value);
+    entries.push({ name, value });
+  }
 
-    return true;
-  }).map((entry) => ({
-    name: entry.name,
-    value: entry.value!.trim(),
-  }));
+  return entries;
 }
 
 /*
@@ -917,12 +893,12 @@ async function requestGemini(
       const message =
         typeof data === "object" && data !== null && "error" in data
           ? JSON.stringify(
-            (
-              data as {
-                error?: unknown;
-              }
-            ).error,
-          )
+              (
+                data as {
+                  error?: unknown;
+                }
+              ).error,
+            )
           : text;
 
       const error = new Error(
@@ -939,6 +915,12 @@ async function requestGemini(
     }
 
     return data as GeminiResponse;
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error(`Gemini request timed out after ${GEMINI_TIMEOUT_MS}ms`);
+    }
+
+    throw error;
   } finally {
     clearTimeout(timeout);
   }
@@ -946,25 +928,32 @@ async function requestGemini(
 
 /*
 |--------------------------------------------------------------------------
-| GEMINI FULL FALLBACK + 12-HOUR KEY COOLDOWN
+| GEMINI SEQUENTIAL KEY ROTATION + MODEL FALLBACK
 |--------------------------------------------------------------------------
 |
+| Keys ek-ek karke try hoti hain (koi parallel/hedge request nahi).
+|
 | Model order:
+|   Primary model -> Fallback 1 -> Fallback 2 -> Groq
 |
-| Primary model
-|   -> available Gemini keys
+| Failure handling:
 |
-| Fallback model 1
-|   -> available Gemini keys
+| - 429 (quota):
+|     us key + model pe 24h30m cooldown, next key try hoti hai.
 |
-| Fallback model 2
-|   -> available Gemini keys
+| - Invalid key (400 API_KEY_INVALID, 401, 403):
+|     key saare models ke liye 24h30m disable, next key try hoti hai.
 |
-| A key that receives a temporary/provider failure is
-| globally disabled for 12 hours.
+| - 503 (model overloaded):
+|     model pe 3 minute cooldown, seedha next model pe jaata hai.
 |
-| After Gemini is completely exhausted:
-|   -> Groq
+| - Timeout / network / other 5xx:
+|     us key + model pe 3 minute cooldown, next key try hoti hai.
+|
+| - 404 (model not found):
+|     seedha next model pe jaata hai.
+|
+| - Ek model pe max MAX_KEYS_PER_MODEL keys try hoti hain.
 |--------------------------------------------------------------------------
 */
 
@@ -975,85 +964,106 @@ async function requestGeminiWithKeyRotation(
   payload: AstroAnswerPayload;
   model: string;
 }> {
-  /*
-   * Use the named entries here so we know which
-   * Redis health record belongs to each key.
-   */
   const apiKeyEntries = getGeminiApiKeyEntries();
 
   if (apiKeyEntries.length === 0) {
     throw new Error("GEMINI_API_KEY_NOT_CONFIGURED");
   }
 
-  /*
-   * Determine which keys are currently healthy.
-   *
-   * This happens once per request so a key that is
-   * globally cooling down is skipped completely.
-   */
-  const usableKeys: Array<{
-    name: string;
-    value: string;
-  }> = [];
+  let lastError: unknown = null;
 
-  for (const entry of apiKeyEntries) {
-    const health = await getGeminiKeyHealth(entry.name);
+  for (const model of GEMINI_MODEL_CHAIN) {
+    console.log(`[Gemini] Trying model: ${model}`);
 
-    if (health && health.failedUntil > Date.now()) {
+    // Model-wide cooldown (jaise 503) check karo.
+    const modelHealthName = getGeminiHealthName(MODEL_HEALTH_KEY_NAME, model);
+    const modelHealth = await getGeminiKeyHealth(modelHealthName);
+
+    if (modelHealth && modelHealth.failedUntil > Date.now()) {
       const remainingMinutes = Math.ceil(
-        (health.failedUntil - Date.now()) / 60_000,
+        (modelHealth.failedUntil - Date.now()) / 60_000,
       );
 
       console.warn(
-        `[Gemini] Skipping ${entry.name}; cooldown active for approximately ${remainingMinutes} minutes.`,
+        `[Gemini] Skipping ${model}; model cooldown active for approximately ${remainingMinutes} minutes.`,
       );
 
       continue;
     }
 
-    usableKeys.push(entry);
-  }
+    // Key cooldown aur invalid-key cooldown concurrently check karo.
+    const healthResults = await Promise.all(
+      apiKeyEntries.map(async (entry) => {
+        const healthName = getGeminiHealthName(entry.name, model);
+        const invalidHealthName = getGeminiHealthName(
+          entry.name,
+          INVALID_KEY_HEALTH_MODEL,
+        );
 
-  /*
-   * Every configured key is currently cooling down.
-   *
-   * Throw immediately so the caller moves to Groq.
-   */
-  if (usableKeys.length === 0) {
-    throw new Error("GEMINI_ALL_KEYS_COOLDOWN");
-  }
+        const [health, invalidHealth] = await Promise.all([
+          getGeminiKeyHealth(healthName),
+          getGeminiKeyHealth(invalidHealthName),
+        ]);
 
-  let lastError: unknown = null;
+        return {
+          entry,
+          healthName,
+          invalidHealthName,
+          health,
+          invalidHealth,
+        };
+      }),
+    );
 
-  /*
-   * IMPORTANT:
-   *
-   * usableKeys is mutated when a key receives a
-   * cooldown-worthy failure.
-   *
-   * Therefore that key will NOT be tried against
-   * another Gemini model during this request.
-   */
-  for (const model of GEMINI_MODEL_CHAIN) {
-    console.log(`[Gemini] Trying model: ${model}`);
+    const availableEntries = healthResults.filter(
+      ({ entry, health, invalidHealth }) => {
+        if (invalidHealth && invalidHealth.failedUntil > Date.now()) {
+          const remainingMinutes = Math.ceil(
+            (invalidHealth.failedUntil - Date.now()) / 60_000,
+          );
 
-    /*
-     * Snapshot the current usable keys.
-     */
-    const keysForModel = [...usableKeys];
+          console.warn(
+            `[Gemini] Skipping ${entry.name} (invalid key) for ${model}; disabled for approximately ${remainingMinutes} minutes.`,
+          );
 
-    for (const entry of keysForModel) {
-      /*
-       * The key may have been removed while another
-       * model/key combination was processing.
-       */
-      if (
-        !usableKeys.some(
-          (usableKey) => usableKey.name === entry.name,
-        )
-      ) {
-        continue;
+          return false;
+        }
+
+        if (health && health.failedUntil > Date.now()) {
+          const remainingMinutes = Math.ceil(
+            (health.failedUntil - Date.now()) / 60_000,
+          );
+
+          console.warn(
+            `[Gemini] Skipping ${entry.name} for ${model}; cooldown active for approximately ${remainingMinutes} minutes.`,
+          );
+
+          return false;
+        }
+
+        return true;
+      },
+    );
+
+    if (availableEntries.length === 0) {
+      console.warn(`[Gemini] No available keys for ${model}.`);
+      continue;
+    }
+
+    let attempts = 0;
+
+    for (const { entry, healthName, invalidHealthName } of availableEntries) {
+      if (attempts >= MAX_KEYS_PER_MODEL) {
+        console.warn(
+          `[Gemini] Reached max ${MAX_KEYS_PER_MODEL} key attempts for ${model}. Moving on.`,
+        );
+
+        break;
       }
+
+      attempts++;
+
+      console.log(`[Gemini] Starting ${model} with ${entry.name}.`);
 
       try {
         const response = await requestGemini(
@@ -1063,24 +1073,17 @@ async function requestGeminiWithKeyRotation(
           question,
         );
 
-        const text = extractGeminiText(response);
+        const responseText = extractGeminiText(response);
 
-        if (!text) {
+        if (!responseText) {
           throw new Error("GEMINI_EMPTY_RESPONSE");
         }
 
-        const payload = parseAstroAnswerPayload(text);
+        const payload = parseAstroAnswerPayload(responseText);
 
-        /*
-         * SUCCESS
-         *
-         * Clear any old health record for this key.
-         */
-        await clearGeminiKeyHealth(entry.name);
+        await clearGeminiKeyHealth(healthName);
 
-        console.log(
-          `[Gemini] Success: ${model} using ${entry.name}`,
-        );
+        console.log(`[Gemini] Success: ${model} using ${entry.name}`);
 
         return {
           payload,
@@ -1095,60 +1098,70 @@ async function requestGeminiWithKeyRotation(
           `[Gemini] Failed model=${model}, key=${entry.name}, status=${info.status}: ${info.message}`,
         );
 
-        /*
-         * Only temporary/provider/network failures
-         * cause the 12-hour global cooldown.
-         */
-        if (shouldCooldownGeminiKey(error)) {
-          const previousHealth = await getGeminiKeyHealth(
-            entry.name,
+        // 1) Model hi nahi mila: baaki keys try karna bekaar hai.
+        if (isModelNotFoundError(error)) {
+          console.warn(
+            `[Gemini] Model ${model} not found (404). Skipping to next model.`,
           );
 
+          break;
+        }
+
+        // 2) Model overloaded (503): model pe chhota cooldown, next model.
+        if (isModelOverloadedError(error)) {
           await setGeminiKeyHealth(
-            entry.name,
-            previousHealth,
+            modelHealthName,
+            modelHealth,
             info.message,
+            GEMINI_TEMP_COOLDOWN_MS,
           );
-
-          /*
-           * Do not use this key against another model
-           * during the current request.
-           */
-          const index = usableKeys.findIndex(
-            (usableKey) => usableKey.name === entry.name,
-          );
-
-          if (index !== -1) {
-            usableKeys.splice(index, 1);
-          }
 
           console.warn(
-            `[Gemini] ${entry.name} placed on 12-hour cooldown.`,
+            `[Gemini] ${model} overloaded (503). Model placed on 3-minute cooldown. Moving to next model.`,
+          );
+
+          break;
+        }
+
+        // 3) Key invalid: saare models ke liye disable, next key try karo.
+        if (isInvalidKeyError(error)) {
+          const previousInvalid = await getGeminiKeyHealth(invalidHealthName);
+
+          await setGeminiKeyHealth(
+            invalidHealthName,
+            previousInvalid,
+            info.message,
+            GEMINI_QUOTA_COOLDOWN_MS,
+          );
+
+          console.warn(
+            `[Gemini] ${entry.name} invalid. Disabled for all models for 24-hour-30-minute.`,
+          );
+
+          continue;
+        }
+
+        // 4) Quota / timeout / network / 5xx: key + model cooldown.
+        if (shouldCooldownGeminiKey(error)) {
+          const previousHealth = await getGeminiKeyHealth(healthName);
+          const cooldownMs = getCooldownMs(error);
+
+          await setGeminiKeyHealth(
+            healthName,
+            previousHealth,
+            info.message,
+            cooldownMs,
+          );
+
+          console.warn(
+            `[Gemini] ${entry.name} + ${model} placed on ${Math.round(
+              cooldownMs / 60_000,
+            )}-minute cooldown.`,
           );
         }
 
-        /*
-         * For non-cooldown errors, simply continue.
-         *
-         * Example:
-         * 400 / 401 / 403
-         *
-         * These do NOT globally disable the key.
-         */
-        continue;
+        // Next key try hogi.
       }
-    }
-
-    /*
-     * If every key has now been placed on cooldown,
-     * stop trying Gemini models.
-     */
-    if (usableKeys.length === 0) {
-      console.warn(
-        "[Gemini] All Gemini keys are now on cooldown.",
-      );
-
-      break;
     }
   }
 
