@@ -595,7 +595,7 @@ const ENGLISH_TEXT: UiText = {
     description: "Vedic astrology guidance for reflection and insight.",
 
     disclaimer:
-      "AstroAI provides Vedic astrology interpretations for informational and entertainment purposes only. Astrology is not guaranteed and should not be considered professional medical, legal, financial, or other professional advice.",
+      "AstroAI strives to make your birth chart calculations 100% accurate based on the details you provide, and offers Vedic astrology interpretations accordingly. Astrology indicates tendencies and possibilities.",
 
     right: "For guidance and self-reflection, not guaranteed predictions.",
 
@@ -826,7 +826,7 @@ inputLabel: "अपना प्रश्न लिखें",
       description: "आत्म-चिंतन और मार्गदर्शन के लिए वैदिक ज्योतिष की व्याख्या।",
 
       disclaimer:
-        "AstroAI वैदिक ज्योतिष की व्याख्या केवल जानकारी और मनोरंजन के उद्देश्य से प्रदान करता है। ज्योतिष निश्चित भविष्यवाणी नहीं है और इसे चिकित्सा, कानूनी, वित्तीय या किसी अन्य पेशेवर सलाह के रूप में नहीं माना जाना चाहिए।",
+        "AstroAI आपके जन्म विवरण के आधार पर अपनी कुंडली गणना को 100% सटीक बनाने का प्रयास करता है और उसके अनुसार वैदिक ज्योतिष की व्याख्या देता है। ज्योतिष संभावनाओं और प्रवृत्तियों को दर्शाता है",
 
       right: "मार्गदर्शन और आत्म-चिंतन के लिए, निश्चित भविष्यवाणी नहीं।",
 

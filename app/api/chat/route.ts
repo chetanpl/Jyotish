@@ -133,9 +133,7 @@ const localGeminiHealth = new Map<string, GeminiKeyHealth>();
 |--------------------------------------------------------------------------
 */
 
-async function redisCommand<T = unknown>(
-  command: string[],
-): Promise<T | null> {
+async function redisCommand<T = unknown>(command: string[]): Promise<T | null> {
   const url = process.env.UPSTASH_REDIS_REST_URL?.trim();
 
   const token = process.env.UPSTASH_REDIS_REST_TOKEN?.trim();
@@ -164,9 +162,7 @@ async function redisCommand<T = unknown>(
     });
 
     if (!response.ok) {
-      console.error(
-        `[Gemini Health] Redis request failed: ${response.status}`,
-      );
+      console.error(`[Gemini Health] Redis request failed: ${response.status}`);
 
       return null;
     }
@@ -199,10 +195,7 @@ async function getGeminiKeyHealth(
 ): Promise<GeminiKeyHealth | null> {
   const redisKey = getGeminiHealthKey(keyName);
 
-  const redisValue = await redisCommand<string>([
-    "GET",
-    redisKey,
-  ]);
+  const redisValue = await redisCommand<string>(["GET", redisKey]);
 
   if (redisValue) {
     try {
@@ -227,9 +220,7 @@ async function getGeminiKeyHealth(
         return null;
       }
     } catch {
-      console.warn(
-        `[Gemini Health] Invalid Redis data for ${keyName}`,
-      );
+      console.warn(`[Gemini Health] Invalid Redis data for ${keyName}`);
     }
   }
 
@@ -276,9 +267,7 @@ async function setGeminiKeyHealth(
    */
   const redisKey = getGeminiHealthKey(keyName);
 
-  const ttlSeconds = Math.ceil(
-    GEMINI_KEY_COOLDOWN_MS / 1000,
-  );
+  const ttlSeconds = Math.ceil(GEMINI_KEY_COOLDOWN_MS / 1000);
 
   await redisCommand([
     "SET",
@@ -293,16 +282,10 @@ async function setGeminiKeyHealth(
   ]);
 }
 
-async function clearGeminiKeyHealth(
-  keyName: string,
-): Promise<void> {
+async function clearGeminiKeyHealth(keyName: string): Promise<void> {
   localGeminiHealth.delete(keyName);
 
-  await redisCommand([
-    "DEL",
-
-    getGeminiHealthKey(keyName),
-  ]);
+  await redisCommand(["DEL", getGeminiHealthKey(keyName)]);
 }
 
 /*
@@ -726,28 +709,30 @@ function getGeminiApiKeyEntries(): Array<{
 
   const seen = new Set<string>();
 
-  return entries.filter((entry) => {
-    const value = entry.value?.trim();
+  return entries
+    .filter((entry) => {
+      const value = entry.value?.trim();
 
-    if (!value) {
-      return false;
-    }
+      if (!value) {
+        return false;
+      }
 
-    /*
-     * Keep the same deduplication behavior as the original
-     * getGeminiApiKeys() function.
-     */
-    if (seen.has(value)) {
-      return false;
-    }
+      /*
+       * Keep the same deduplication behavior as the original
+       * getGeminiApiKeys() function.
+       */
+      if (seen.has(value)) {
+        return false;
+      }
 
-    seen.add(value);
+      seen.add(value);
 
-    return true;
-  }).map((entry) => ({
-    name: entry.name,
-    value: entry.value!.trim(),
-  }));
+      return true;
+    })
+    .map((entry) => ({
+      name: entry.name,
+      value: entry.value!.trim(),
+    }));
 }
 
 /*
@@ -917,12 +902,12 @@ async function requestGemini(
       const message =
         typeof data === "object" && data !== null && "error" in data
           ? JSON.stringify(
-            (
-              data as {
-                error?: unknown;
-              }
-            ).error,
-          )
+              (
+                data as {
+                  error?: unknown;
+                }
+              ).error,
+            )
           : text;
 
       const error = new Error(
@@ -1047,11 +1032,7 @@ async function requestGeminiWithKeyRotation(
        * The key may have been removed while another
        * model/key combination was processing.
        */
-      if (
-        !usableKeys.some(
-          (usableKey) => usableKey.name === entry.name,
-        )
-      ) {
+      if (!usableKeys.some((usableKey) => usableKey.name === entry.name)) {
         continue;
       }
 
@@ -1078,9 +1059,7 @@ async function requestGeminiWithKeyRotation(
          */
         await clearGeminiKeyHealth(entry.name);
 
-        console.log(
-          `[Gemini] Success: ${model} using ${entry.name}`,
-        );
+        console.log(`[Gemini] Success: ${model} using ${entry.name}`);
 
         return {
           payload,
@@ -1100,15 +1079,9 @@ async function requestGeminiWithKeyRotation(
          * cause the 12-hour global cooldown.
          */
         if (shouldCooldownGeminiKey(error)) {
-          const previousHealth = await getGeminiKeyHealth(
-            entry.name,
-          );
+          const previousHealth = await getGeminiKeyHealth(entry.name);
 
-          await setGeminiKeyHealth(
-            entry.name,
-            previousHealth,
-            info.message,
-          );
+          await setGeminiKeyHealth(entry.name, previousHealth, info.message);
 
           /*
            * Do not use this key against another model
@@ -1122,9 +1095,7 @@ async function requestGeminiWithKeyRotation(
             usableKeys.splice(index, 1);
           }
 
-          console.warn(
-            `[Gemini] ${entry.name} placed on 12-hour cooldown.`,
-          );
+          console.warn(`[Gemini] ${entry.name} placed on 12-hour cooldown.`);
         }
 
         /*
@@ -1144,9 +1115,7 @@ async function requestGeminiWithKeyRotation(
      * stop trying Gemini models.
      */
     if (usableKeys.length === 0) {
-      console.warn(
-        "[Gemini] All Gemini keys are now on cooldown.",
-      );
+      console.warn("[Gemini] All Gemini keys are now on cooldown.");
 
       break;
     }

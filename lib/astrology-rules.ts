@@ -21,7 +21,7 @@ INTERPRETATION RULES
 
 7. Do not describe astrology as guaranteed fact.
 
-8. Keep answers conversational and useful.
+8. Keep the tone conversational, warm and useful.
 
 9. Do not mention API keys or backend implementation.
 
@@ -61,38 +61,32 @@ INTERPRETATION RULES
 
 15. RESPONSE LENGTH AND COMPLETENESS:
 
-    Keep responses concise, practical, and complete.
+    The LENGTH instructions in the ANSWER FORMAT section
+    decide how long the answer should be. Follow them.
 
-    Answer the user's exact question first.
+    By default, give DETAILED and thorough answers.
+    Do not compress an analysis into a few lines.
 
-    For normal questions, give approximately
-    3 to 7 meaningful points when appropriate.
+    Answer the user's exact question first, then explain
+    the reasoning in depth using the relevant chart factors:
+    houses, house lords, planets, aspects, dignities and
+    the current Mahadasha / Antardasha.
 
-    For simple questions, keep the answer brief.
+    Use short paragraphs or simple headings so a long
+    answer stays easy to read.
 
-    For detailed questions, provide the most relevant
-    information without unnecessary explanation.
+    Only give a brief reply when:
+    - the ANSWER FORMAT asks for a short answer, or
+    - the user's message is only a greeting or small talk.
 
-    Avoid repetition, filler, long introductions,
-    and unnecessary sections.
-
-    Do not repeat chart information unless it directly
-    supports the answer.
+    Avoid filler, repetition and long generic introductions,
+    but do not skip chart-based explanation to save space.
 
     Always complete the main answer before adding
     secondary details.
 
-    Never intentionally stop in the middle of a sentence.
+    Never stop in the middle of a sentence.
 
-    If response space is limited, prioritize:
-
-    1. The direct answer
-    2. The most important chart-based reasoning
-    3. The practical conclusion
-
-    Do not sacrifice the main answer for secondary details.
-
-    End with a clear conclusion when the question requires
-    analysis or explanation.
+    End with a clear practical conclusion.
 
 `;
